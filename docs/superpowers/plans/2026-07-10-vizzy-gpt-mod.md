@@ -111,6 +111,8 @@ The SR2 Mod Builder owns its generated manifest, mod-data asset, root assembly d
 - Create: `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGPT.Runtime.asmdef`
 - Create: `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptMod.cs`
 - Create: `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptBehaviour.cs`
+- Create: `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGPT.EditModeTests.asmdef`
+- Create: `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptBootstrapTests.cs`
 
 **Interfaces:**
 - Produces: `VizzyGPT.Core.BuildInfo.Version`, buildable `VizzyGPT.Core.dll`, and a Juno-discoverable `VizzyGptMod : GameModBase`.
@@ -273,7 +275,43 @@ $unity = 'C:\Program Files\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe'
 
 Open the project once, choose `SimpleRockets 2 > Mod Builder Window`, enter name `VizzyGPT`, author `rickyee`, description `GPT assistant for Vizzy`, version `0.1.0`, and click `Start Creating Mod`. Commit every builder-generated manifest and configuration asset without hand-editing it.
 
-- [ ] **Step 8: Add the loadable mod entry point**
+- [ ] **Step 8: Write a reflection-based failing bootstrap test before production code**
+
+Create `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGPT.EditModeTests.asmdef` with `optionalUnityReferences: ["TestAssemblies"]` and no runtime assembly reference, so the test can compile before the runtime types exist.
+
+Create `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptBootstrapTests.cs`:
+
+```csharp
+using System;
+using System.Linq;
+using NUnit.Framework;
+
+namespace VizzyGPT.Tests.EditMode;
+
+public sealed class VizzyGptBootstrapTests
+{
+    [Test]
+    public void Runtime_contains_mod_entry_and_lifecycle_owner()
+    {
+        var types = AppDomain.CurrentDomain.GetAssemblies().SelectMany(a =>
+        {
+            try { return a.GetTypes(); }
+            catch { return Type.EmptyTypes; }
+        }).ToArray();
+
+        Assert.That(types.Any(t => t.FullName == "VizzyGPT.Runtime.VizzyGptMod"), Is.True);
+        Assert.That(types.Any(t => t.FullName == "VizzyGPT.Runtime.VizzyGptBehaviour"), Is.True);
+    }
+}
+```
+
+- [ ] **Step 9: Run the bootstrap test and verify RED**
+
+Run the Unity EditMode test command from `tools/Test-Unity.ps1`.
+
+Expected: FAIL because neither runtime type exists.
+
+- [ ] **Step 10: Add the loadable mod entry point**
 
 Create `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGPT.Runtime.asmdef`:
 
@@ -322,9 +360,9 @@ public sealed class VizzyGptBehaviour : MonoBehaviour
 }
 ```
 
-Run `tools/Sync-Core.ps1`, let Unity compile, save `VizzyGPT.sr2-mod` with the SR2 Mod Builder into the game's `Mods` folder, enable it, restart the game, and verify `ModLoadLog.txt` contains `Mod Loaded: VizzyGPT` and `Player.log` contains `VizzyGPT 0.1.0 initialized`.
+Run `tools/Sync-Core.ps1`, rerun the EditMode test and verify GREEN, then let Unity compile, save `VizzyGPT.sr2-mod` with the SR2 Mod Builder into the game's `Mods` folder, enable it, restart the game, and verify `ModLoadLog.txt` contains `Mod Loaded: VizzyGPT` and `Player.log` contains `VizzyGPT 0.1.0 initialized`.
 
-- [ ] **Step 9: Commit the baseline**
+- [ ] **Step 11: Commit the baseline**
 
 ```powershell
 git add Directory.Build.props VizzyGPT.sln src tests tools unity
