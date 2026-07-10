@@ -24,10 +24,19 @@ The original user fixture was read only and was not modified.
 - `git diff --check`: completed with no whitespace errors.
 - Static review: changes remain C# 9-compatible, preserve ordinal XML/path comparisons, and are limited to the Task 2 review findings.
 
-## Deferred Verification
+## GREEN Verification
 
-Per explicit user instruction, no executable tests, build, or non-sandbox escalation was attempted. Therefore there is no RED/GREEN evidence for these regressions and compile/NUnit results remain unknown.
+After the platform quota reset, the controller ran the complete suite in an approved non-sandbox shell:
 
-## Concern
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
 
-Run the focused `CanonicalXmlTests` and the full `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1` after the platform quota permits the approved non-sandbox execution.
+Result:
+
+```text
+Build succeeded: 0 warnings, 0 errors.
+Tests: failed 0, passed 17, skipped 0, total 17.
+```
+
+The working tree remained clean after the run. The earlier test-first files establish the intended RED boundary, but executable RED was not captured because the platform quota blocked the pre-implementation run.
