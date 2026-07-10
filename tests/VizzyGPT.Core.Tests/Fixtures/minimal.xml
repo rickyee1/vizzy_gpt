@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Program name="Minimal">
+  <Variables><Variable name="pitch" number="0" /></Variables>
+  <Instructions>
+    <Event event="FlightStart" id="0" style="flight-start" pos="0,0" />
+  </Instructions>
+  <Expressions />
+</Program>
