@@ -25,6 +25,7 @@ namespace VizzyGPT.Core.Programs
             }
 
             var hasElementChildren = element.Elements().Any();
+            var hasSignificantMixedText = element.Nodes().OfType<XText>().Any(text => !(text is XCData) && !string.IsNullOrWhiteSpace(text.Value));
             foreach (var node in element.Nodes())
             {
                 if (node is XElement childElement)
@@ -37,7 +38,7 @@ namespace VizzyGPT.Core.Programs
                 }
                 else if (node is XText text)
                 {
-                    if (!hasElementChildren || !string.IsNullOrWhiteSpace(text.Value))
+                    if (!hasElementChildren || hasSignificantMixedText || !string.IsNullOrWhiteSpace(text.Value))
                     {
                         canonical.Add(new XText(text.Value));
                     }

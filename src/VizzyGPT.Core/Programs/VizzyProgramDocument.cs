@@ -61,14 +61,19 @@ namespace VizzyGPT.Core.Programs
                 throw new ArgumentNullException(nameof(path));
             }
 
-            var segments = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length == 0 || !TryParseSegment(segments[0], out var rootName, out var rootIndex) || rootIndex != 0 || !string.Equals(rootName, Root.Name.LocalName, StringComparison.Ordinal))
+            if (path.Length < 2 || path[0] != '/' || path[1] == '/' || path[path.Length - 1] == '/')
+            {
+                return null;
+            }
+
+            var segments = path.Split('/');
+            if (segments.Length < 2 || segments[0].Length != 0 || segments.Skip(1).Any(segment => segment.Length == 0) || !TryParseSegment(segments[1], out var rootName, out var rootIndex) || rootIndex != 0 || !string.Equals(rootName, Root.Name.LocalName, StringComparison.Ordinal))
             {
                 return null;
             }
 
             var current = Root;
-            for (var segmentIndex = 1; segmentIndex < segments.Length; segmentIndex++)
+            for (var segmentIndex = 2; segmentIndex < segments.Length; segmentIndex++)
             {
                 if (!TryParseSegment(segments[segmentIndex], out var name, out var index) || index < 0)
                 {
@@ -93,14 +98,15 @@ namespace VizzyGPT.Core.Programs
             name = string.Empty;
             index = 0;
 
-            var openBracket = segment.LastIndexOf('[');
-            if (openBracket <= 0 || !segment.EndsWith("]", StringComparison.Ordinal))
+            var openBracket = segment.IndexOf('[');
+            if (openBracket <= 0 || openBracket != segment.LastIndexOf('[') || segment.IndexOf(']', openBracket + 1) != segment.Length - 1)
             {
                 return false;
             }
 
             name = segment.Substring(0, openBracket);
-            return int.TryParse(segment.Substring(openBracket + 1, segment.Length - openBracket - 2), NumberStyles.None, CultureInfo.InvariantCulture, out index);
+            var indexText = segment.Substring(openBracket + 1, segment.Length - openBracket - 2);
+            return int.TryParse(indexText, NumberStyles.None, CultureInfo.InvariantCulture, out index) && string.Equals(index.ToString(CultureInfo.InvariantCulture), indexText, StringComparison.Ordinal);
         }
     }
 }

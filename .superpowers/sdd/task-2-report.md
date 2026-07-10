@@ -1,47 +1,33 @@
-# Task 2 Report: Canonical Vizzy Program Model and Hashing
+# Task 2 Review-Fix Report
 
-## Files Changed
+## Changes
 
-- `src/VizzyGPT.Core/Programs/VizzyProgramDocument.cs`
-- `src/VizzyGPT.Core/Programs/CanonicalXml.cs`
-- `src/VizzyGPT.Core/Programs/VizzyProgramHash.cs`
-- `src/VizzyGPT.Core/Programs/VizzyNodeCatalog.cs`
-- `tests/VizzyGPT.Core.Tests/Fixtures/minimal.xml`
-- `tests/VizzyGPT.Core.Tests/Fixtures/nested.xml`
-- `tests/VizzyGPT.Core.Tests/Programs/CanonicalXmlTests.cs`
-- `.superpowers/sdd/task-2-report.md`
-
-## Implementation
-
-- Parses only a non-namespaced `Program` root and provides independent deep clones, ID lookup, and deterministic indexed path lookup.
-- Canonicalizes attributes with ordinal ordering, removes whitespace-only formatting around element children, preserves text and child order, and hashes UTF-8 canonical XML with lowercase SHA-256 hex.
-- Extracts toolbox `Style` IDs and XML element names into private immutable ordinal sets with nullable-safe containment checks.
+- `CanonicalXml` now removes whitespace-only text only when an element has child elements and no significant mixed text. Whitespace is preserved between child elements when the containing element also has non-whitespace text.
+- `FindByPath` now accepts only absolute indexed paths with exactly one leading slash, no empty or trailing segments, canonical non-negative indices, and an indexed root segment.
+- Added regression coverage for mixed-content whitespace, relative/doubled/trailing paths, malformed indexes, sibling index selection, out-of-range indexes, and a known lowercase UTF-8 SHA-256 value.
 
 ## Fixture Integrity
 
-Initial and final SHA-256 values are identical:
+`nested.xml` was recreated from `UserData/FlightPrograms/unsdeady FC 2modes.xml` using a byte-level replacement of only `name="unsdeady FC 2modes"` with `name="NestedFixture"`.
 
-| Fixture | SHA-256 |
-| --- | --- |
-| `tests/VizzyGPT.Core.Tests/Fixtures/minimal.xml` | `55C97E01A1A2E818EE613C7DB84EAC3F1D7CF6D88464A327CCE462A02477F267` |
-| `tests/VizzyGPT.Core.Tests/Fixtures/nested.xml` | `1B0487289A286266C92218ED99975CD3700B3202637972DB01707BD9089F444F` |
+- XML parser validation: source and target roots are non-namespaced `Program`; source name is `unsdeady FC 2modes`; target name is `NestedFixture`.
+- The old root-name byte sequence occurred exactly once at offset `52`; the replacement byte sequence occurs exactly once at the same offset.
+- Source length: `4054` bytes. Target length: `4049` bytes, matching the five-byte name-length difference.
+- Prefix and suffix byte comparisons passed after accounting for that length difference.
+- Source SHA-256: `10f1e84228ef6e971bea48c42af9b8742c1525ca2408b154f0238930b34ae8ff`.
+- Target SHA-256: `bad12470f17b1cec7695f8fa6deaa4dd7c1e038786b4e6681119ab95d43e5ebe`.
 
-The original user flight-program fixture and `VizzyToolbox.xml` were read only and were not modified.
+The original user fixture was read only and was not modified.
 
-## Checks
+## Static Checks
 
 - `git diff --check`: completed with no whitespace errors.
-- Static review: C# 9 syntax only; nullable return values and null inputs handled; ordinal comparisons used for XML root, paths, catalog membership, and canonical attribute ordering; no mutable catalog collections are exposed.
-- `dotnet build src/VizzyGPT.Core/VizzyGPT.Core.csproj --configuration Release --no-restore`: deferred before compilation by the platform SDK-access restriction.
+- Static review: changes remain C# 9-compatible, preserve ordinal XML/path comparisons, and are limited to the Task 2 review findings.
 
-## RED/GREEN Evidence
+## Deferred Verification
 
-The existing Task 2 test-first fixtures and `CanonicalXmlTests.cs` were preserved. Per explicit user authorization, production code was implemented before RED/GREEN execution because the platform blocks the required non-sandbox test execution until 19:33.
-
-- RED command deferred: `dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --filter FullyQualifiedName~CanonicalXmlTests`
-- GREEN command attempted: `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1`
-- Actual result: MSBuild failed before compilation/tests with `MSB4184` while resolving `GetPlatformSDKLocation(Windows, 7.0)`: access to `C:\Users\rickyee\AppData\Local\Microsoft SDKs` was denied. Output reported `0` warnings and `1` error. No non-sandbox escalation or bypass was attempted.
+Per explicit user instruction, no executable tests, build, or non-sandbox escalation was attempted. Therefore there is no RED/GREEN evidence for these regressions and compile/NUnit results remain unknown.
 
 ## Concern
 
-Automated RED/GREEN and final test-suite evidence remains deferred. The implementation requires a post-19:33 approved non-sandbox run of `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1`; until then, compile and NUnit results are unknown.
+Run the focused `CanonicalXmlTests` and the full `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1` after the platform quota permits the approved non-sandbox execution.

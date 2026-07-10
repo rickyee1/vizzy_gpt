@@ -47,12 +47,51 @@ public sealed class CanonicalXmlTests
         Assert.That(node!.Attribute("id")!.Value, Is.EqualTo("0"));
     }
 
+    [TestCase("Program[0]/Instructions[0]/Event[0]")]
+    [TestCase("//Program[0]/Instructions[0]/Event[0]")]
+    [TestCase("/Program[0]/Instructions[0]/Event[0]/")]
+    [TestCase("/Program[0]/Instructions[0]/Event[x]")]
+    [TestCase("/Program[0]/Instructions[0]/Event[0][0]")]
+    [TestCase("/Program[0]/Instructions[0]/Event[1]")]
+    public void FindByPath_rejects_noncanonical_or_out_of_range_paths(string path)
+    {
+        var document = VizzyProgramDocument.Parse(ReadFixture("minimal.xml"));
+
+        Assert.That(document.FindByPath(path), Is.Null);
+    }
+
+    [Test]
+    public void FindByPath_selects_the_requested_sibling_index()
+    {
+        var document = VizzyProgramDocument.Parse("<Program><Instructions><Event id='0' /><Event id='1' /></Instructions></Program>");
+
+        var node = document.FindByPath("/Program[0]/Instructions[0]/Event[1]");
+
+        Assert.That(node!.Attribute("id")!.Value, Is.EqualTo("1"));
+    }
+
     [Test]
     public void Canonical_xml_preserves_text_and_child_order()
     {
         var document = VizzyProgramDocument.Parse("<Program z='2' a='1'><First> text </First>  <Second /></Program>");
 
         Assert.That(document.ToXml(), Is.EqualTo("<Program a=\"1\" z=\"2\"><First> text </First><Second /></Program>"));
+    }
+
+    [Test]
+    public void Canonical_xml_preserves_whitespace_in_mixed_content()
+    {
+        var document = VizzyProgramDocument.Parse("<Program><Message>before<Strong /> <Em />after</Message></Program>");
+
+        Assert.That(document.ToXml(), Is.EqualTo("<Program><Message>before<Strong /> <Em />after</Message></Program>"));
+    }
+
+    [Test]
+    public void Hash_is_known_lowercase_utf8_sha256()
+    {
+        var document = VizzyProgramDocument.Parse("<Program />");
+
+        Assert.That(VizzyProgramHash.Compute(document), Is.EqualTo("4d71a37c5d882b37ba3151544effaa23aadde9a12df8ae02d13915ddedb14d00"));
     }
 
     [Test]
