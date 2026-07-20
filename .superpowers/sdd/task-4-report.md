@@ -132,3 +132,27 @@ namespace VizzyGPT.Core.Storage
 - Target fingerprints include every operation `target` and `destination`. Declaration fingerprints include declarations referenced by selected subtrees or inserted/replacement `NodeSpec` trees.
 - `Conflict` carries neither a patch nor a document. `Unchanged` exposes the stored patch/result; `Rebased` exposes the base-hash-adjusted patch and its freshly applied result.
 - Storage replaces every invalid filename character with `_`, writes pending files below `Pending`, writes timestamped snapshots below `Backups/<sanitized fingerprint>`, and leaves no temporary sibling after a successful operation.
+
+## Phase B Implementation
+
+- Added immutable validation issues/reports and layered Vizzy validation in pure XML, catalog, then runtime-callback order. The pure XML layer checks exact direct root containers, duplicate numeric IDs, ordinal global-variable resolution, constant values, and expression/container placement. Catalog style checks and runtime callback output retain deterministic document order.
+- Added validated `ChangeSession` snapshots. Session creation rejects null or inconsistent inputs and any report containing errors, verifies the supplied patch result by reapplying the patch, stores canonical XML/hashes, and appends validation warnings after patch preview lines.
+- Added explicit Newtonsoft contracts for pending changes and their selector/declaration fingerprints. Fingerprints use canonical SHA-256 subtree hashes for every target/destination and for ordinal variable/custom-node dependencies found in selected and inserted/replacement trees.
+- Added conflict-safe pending rebasing. Matching hashes return the stored patch/result; stale bases require every selector and declaration to resolve exactly once with its recorded hash before a base-hash-only patch clone is applied to the current document.
+- Added caller-rooted atomic file storage with invalid-character sanitization, UTF-8 without BOM, sibling temporary files, move/replace publication, failure cleanup, UTC collision-safe backup names, and newest-20 retention.
+
+## Verification Evidence
+
+| Command | Result |
+| --- | --- |
+| `dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --filter "FullyQualifiedName~VizzyProgramValidatorTests|FullyQualifiedName~PendingChangeRebaserTests|FullyQualifiedName~FileDataStoreTests"` | RED confirmed before implementation: exit 1 with exactly 17 compiler errors, all missing Task 4 namespaces/types. |
+| `dotnet build src/VizzyGPT.Core/VizzyGPT.Core.csproj --no-restore` | Exit 0; 0 warnings, 0 errors after implementation and after final tightening. |
+| `powershell -ExecutionPolicy Bypass -File tools\\Test-Core.ps1` | Exit 0; build 0 warnings/0 errors; 319 passed, 0 failed, 0 skipped. |
+| `dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~VizzyProgramValidatorTests|FullyQualifiedName~PendingChangeRebaserTests|FullyQualifiedName~FileDataStoreTests"` | Exit 0; 30 passed, 0 failed, 0 skipped. |
+| `git status --short -- UserData` plus scoped `UserData` inspection | Clean; `UserData` directory is absent, so the test runs created no game-data files. |
+| `git diff --cached --check` | Exit 0; no whitespace errors. |
+
+## Concerns
+
+- A direct Debug `dotnet test` invocation builds successfully but the Codex Windows environment denies the testhost parent-process query. The repository wrapper applies its existing `MSTest.EnableParentProcessQuery=false` workaround; all focused and full tests pass with the wrapper-prepared Release testhost.
+- No production-code concerns remain from self-review.
