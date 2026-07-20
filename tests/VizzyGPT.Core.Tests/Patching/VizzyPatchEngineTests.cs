@@ -480,6 +480,23 @@ namespace VizzyGPT.Core.Tests.Patching
         }
 
         [Test]
+        public void Apply_checks_duplicate_ids_after_all_operations_not_between_operations()
+        {
+            var document = Minimal();
+            var originalHash = VizzyProgramHash.Compute(document);
+            var patch = PatchFor(
+                document,
+                Op("insertAfter", "target", Id(0), "node", Spec("Log", "id", "0")),
+                Op("removeNode", "target", Path("/Program[0]/Instructions[0]/Log[0]")));
+
+            var result = VizzyPatchEngine.Apply(document, patch);
+
+            Assert.That(result.Document.ToXml(), Is.EqualTo(document.ToXml()));
+            Assert.That(VizzyProgramHash.Compute(document), Is.EqualTo(originalHash));
+            Assert.That(result.Changes, Has.Count.EqualTo(2));
+        }
+
+        [Test]
         public void Apply_rejects_a_move_into_the_moved_node_itself()
         {
             var document = Document("<Program><Variables /><Instructions><Event id=\"0\"><Instructions id=\"1\"><Log id=\"2\" /></Instructions></Event></Instructions><Expressions /></Program>");
@@ -750,6 +767,20 @@ namespace VizzyGPT.Core.Tests.Patching
                     operation.Remove(field);
                     yield return new TestCaseData(operationType, field, operation.ToString(Formatting.None))
                         .SetName("Deserialize_rejects_" + operationType + "_without_" + field);
+                }
+            }
+        }
+
+        public static IEnumerable<TestCaseData> NullRequiredFieldCases()
+        {
+            foreach (var operationType in OperationTypes)
+            {
+                foreach (var field in RequiredFieldsFor(operationType))
+                {
+                    var operation = ValidOperation(operationType);
+                    operation[field] = JValue.CreateNull();
+                    yield return new TestCaseData(operationType, field, operation.ToString(Formatting.None))
+                        .SetName("Deserialize_rejects_" + operationType + "_null_" + field);
                 }
             }
         }
