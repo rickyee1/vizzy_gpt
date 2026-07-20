@@ -164,3 +164,8 @@ $env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.p
 - Scope is limited to the test suite and this Task 3 report; no production code is modified.
 - `git diff --check` completed with no whitespace errors; the working tree reports existing LF-to-CRLF conversion warnings only.
 - Final ownership review completed: only the two authorized files are modified.
+
+## Depth Guard Clarification
+
+- The depth regression now requires the stable public message fragment `JSON nesting depth exceeds protocol maximum of 64`, distinguishing the custom protocol parser's explicit guard from Json.NET's later `MaxDepth` fallback.
+- Tests remain intentionally unrun so the controller can capture RED.

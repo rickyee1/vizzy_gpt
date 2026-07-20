@@ -110,7 +110,7 @@ namespace VizzyGPT.Core.Tests.Patching
 
             var exception = Assert.Throws<PatchApplyException>(() => PatchDocument.Deserialize(json));
 
-            Assert.That(exception!.Message, Does.Contain("depth").IgnoreCase);
+            Assert.That(exception!.Message, Does.Contain("JSON nesting depth exceeds protocol maximum of 64"));
         }
 
         [TestCase("{/* comment */\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
