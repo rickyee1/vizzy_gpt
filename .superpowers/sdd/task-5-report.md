@@ -281,3 +281,9 @@ The contract is corrected to match the official Structured Outputs subset docume
 - Queue-backed transport remains deterministic and has no network path.
 - No production, project, fixture, or unrelated test file is modified.
 - Controller RED execution is pending by instruction; only diff and ownership checks are performed here.
+
+### Selector Helper Compile Correction
+
+The controller build found two nullable-key compiler errors at `OpenAiClientTests.cs:774-775`: Newtonsoft's `Values<string>()` annotates the selected value as nullable, so `ToDictionary` inferred `string?` despite the helper's preceding selector-shape assumptions. The key extraction now uses an explicit null-forgiving assertion after `Single()`. Test behavior and production remain unchanged.
+
+Compile-only verification with `dotnet build tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-restore` succeeded with 0 warnings and 0 errors. No tests were run.

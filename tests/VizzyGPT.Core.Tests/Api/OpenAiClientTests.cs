@@ -772,7 +772,7 @@ namespace VizzyGPT.Core.Tests.Api
             }
 
             var byRequiredField = union.ToDictionary(
-                member => member["required"]!.Values<string>().Single(),
+                member => member["required"]!.Values<string>().Single()!,
                 member => member,
                 StringComparer.Ordinal);
             return byRequiredField.TryGetValue("id", out var idVariant) &&
