@@ -93,6 +93,77 @@ namespace VizzyGPT.Core.Tests.Patching
             AssertDeserializeRejected(json);
         }
 
+        [TestCase("{\"baseHash\":'hash',\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{'baseHash':\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{baseHash:\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"ha\\'sh\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"line\rbreak\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"line\nbreak\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\u00A0\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        public void Deserialize_rejects_non_rfc_json_string_and_whitespace_syntax(string json)
+        {
+            AssertDeserializeRejected(json);
+        }
+
+        [TestCase("+0")]
+        [TestCase("00")]
+        [TestCase("0.")]
+        [TestCase("NaN")]
+        [TestCase("Infinity")]
+        [TestCase("0x0")]
+        [TestCase("undefined")]
+        public void Deserialize_rejects_non_rfc_json_number_literals(string numberLiteral)
+        {
+            AssertDeserializeRejected("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":" + numberLiteral + "}}]}");
+        }
+
+        [Test]
+        public void Deserialize_accepts_comment_markers_inside_double_quoted_strings()
+        {
+            const string text = "// ordinary text /* still ordinary text */";
+            var json = "{\"baseHash\":\"hash\",\"summary\":\"" + text + "\",\"operations\":[{\"type\":\"updateAttribute\",\"target\":{\"id\":0},\"attribute\":\"text\",\"value\":\"" + text + "\"}]}";
+
+            var document = PatchDocument.Deserialize(json);
+
+            Assert.That(document.Summary, Is.EqualTo(text));
+            Assert.That(document.Operations[0].Value, Is.EqualTo(text));
+        }
+
+        [Test]
+        public void Deserialize_accepts_json_delimiters_inside_double_quoted_strings()
+        {
+            const string text = "comma, braces {}, brackets []";
+            var json = "{\"baseHash\":\"hash\",\"summary\":\"" + text + "\",\"operations\":[{\"type\":\"updateAttribute\",\"target\":{\"id\":0},\"attribute\":\"text\",\"value\":\"" + text + "\"}]}";
+
+            var document = PatchDocument.Deserialize(json);
+
+            Assert.That(document.Summary, Is.EqualTo(text));
+            Assert.That(document.Operations[0].Value, Is.EqualTo(text));
+        }
+
+        [Test]
+        public void Deserialize_accepts_all_legal_json_string_escapes()
+        {
+            const string expected = "\b\f\n\r\t\"/\\A";
+            const string json = "{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"updateAttribute\",\"target\":{\"id\":0},\"attribute\":\"text\",\"value\":\"\\b\\f\\n\\r\\t\\\"\\/\\\\\\u0041\"}]}";
+
+            var document = PatchDocument.Deserialize(json);
+
+            Assert.That(document.Operations[0].Value, Is.EqualTo(expected));
+        }
+
+        [TestCase("0", 0)]
+        [TestCase("-1", -1)]
+        [TestCase("42", 42)]
+        [TestCase("1.0", 1)]
+        [TestCase("1e0", 1)]
+        public void Deserialize_accepts_legal_integral_json_number_forms(string numberLiteral, int expectedId)
+        {
+            var document = PatchDocument.Deserialize("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":" + numberLiteral + "}}]}");
+
+            Assert.That(document.Operations[0].Target!.Id, Is.EqualTo(expectedId));
+        }
+
         [TestCase(null)]
         [TestCase("null")]
         public void Deserialize_rejects_null_json_or_result(string? json)

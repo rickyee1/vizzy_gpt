@@ -102,3 +102,13 @@ Tests: failed 0, passed 231, skipped 0, total 231.
 - Release build: 0 warnings, 0 errors.
 - Tests: failed 0, passed 237, skipped 0, total 237.
 - Scanner self-review: escaped quotes and backslashes retain string state; comment-like and comma-like string content is ignored by the precheck; all other JSON syntax remains delegated to Newtonsoft.
+
+## Strict-JSON Phase A Regression Matrix
+
+- 109 NUnit cases total after adding 22 strict-JSON cases in `VizzyPatchEngineTests`.
+- Rejection coverage: single-quoted string values and property names, unquoted property names, invalid `\\'` escapes, raw CR and LF in strings, NBSP outside strings, and Json.NET extension literals `+0`, `00`, `0.`, `NaN`, `Infinity`, `0x0`, and `undefined`.
+- Acceptance coverage: comment markers and structural delimiters inside double-quoted strings, every RFC JSON string escape, and legal integral JSON number forms `0`, `-1`, `42`, `1.0`, and `1e0` where a selector ID is accepted.
+
+## Strict-JSON Phase A RED Verification
+
+- RED pending controller execution; tests were intentionally not run in this worktree.
