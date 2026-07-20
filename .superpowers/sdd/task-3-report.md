@@ -1,4 +1,4 @@
-# Task 3 Phase A Report
+# Task 3 Report
 
 ## Files Changed
 
@@ -20,7 +20,7 @@
 
 ## RED Verification
 
-Controller RED capture is pending. Per Phase A instructions, this worker did not run tests.
+The controller ran `tools/Test-Core.ps1` from commits containing only the Task 3 tests. The core project built, then test compilation failed with 18 expected errors because `VizzyGPT.Core.Patching`, `PatchOperationType`, `PatchDocument`, and `NodeSpec` did not exist.
 
 ## Phase B1: Patch Contracts
 
@@ -44,8 +44,31 @@ Controller RED capture is pending. Per Phase A instructions, this worker did not
 
 - Focused contract test command compiled both projects, then the environment aborted `testhost` with `Win32Exception (5): Access denied`; no NUnit cases executed.
 - `dotnet build src\\VizzyGPT.Core\\VizzyGPT.Core.csproj --no-restore`: PASS, 0 warnings and 0 errors.
-- `git diff --check` and owned-file diff review pending below.
+- `git diff --cached --check`: PASS with no whitespace errors.
+- Staged ownership review: PASS; exactly the four contract files and this report are staged. The shared `VizzyPatchEngine.cs` remains unstaged and untouched.
 
-### Expected Phase Boundary
+## Phase B2: Patch Engine
 
-- `VizzyPatchEngine`, `PatchResult`, and engine behavior remain owned by the engine phase and are not part of this B1 commit.
+### File Implemented
+
+- `src/VizzyGPT.Core/Patching/VizzyPatchEngine.cs`
+
+### Engine Coverage
+
+- Verifies the base hash before cloning and never mutates the input document.
+- Applies all ten operations in order, resolves each selector once, and validates variable scope, instruction containers, protected roots, and move ancestry.
+- Preserves `pos` on replacement when omitted, restricts mutable attributes, and rejects duplicate final IDs.
+- Returns one deterministic single-line change description per operation.
+
+## GREEN Verification
+
+The controller ran the complete suite after implementation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
+
+```text
+Build succeeded: 0 warnings, 0 errors.
+Tests: failed 0, passed 231, skipped 0, total 231.
+```
