@@ -220,3 +220,24 @@ This second test-only follow-up adds 6 deterministic cases. They are intentional
 - The previously documented direct Debug testhost restriction remains environmental; the repository wrapper and wrapper-prepared focused run are green.
 - The deferred Windows reserved-device-name, runtime-callback-exception, and duplicate-analysis performance findings remain outside this review fix scope.
 - The remaining Important findings are represented by unexecuted test contracts; this follow-up contains no production edits.
+
+## Final Important Regression Fixes
+
+- `updateAttribute(variableName)` now reads the selected target's sequential-state `local` attribute. Exact `local="true"` references remain local and never resolve or fingerprint same-named globals; absent/false local state retains global dependency behavior.
+- Same-operation replacement declarations are registered as patch-owned before `NodeSpec` reference analysis. A replacement direct `Expressions/CustomNode` can reference its own new ordinal name, while references to every other declaration in the same tree still resolve and fingerprint normally.
+- Persisted previews now require at least the deterministic patch-change count and exact ordinal equality for the complete `VizzyPatchEngine.Apply(...).Changes` prefix. Additional validation warning lines remain permitted after that prefix.
+- Existing canonical result replay, dependency recomputation, and defensive collection copies remain unchanged.
+
+## Final Important Verification
+
+| Command | Result |
+| --- | --- |
+| `powershell -ExecutionPolicy Bypass -File tools\\Test-Core.ps1` before fixes | RED reproduced: build 0 warnings/0 errors; 5 failed, 344 passed, 0 skipped, 349 total. |
+| `dotnet build src/VizzyGPT.Core/VizzyGPT.Core.csproj --no-restore` | Exit 0; 0 warnings, 0 errors. |
+| `powershell -ExecutionPolicy Bypass -File tools\\Test-Core.ps1` | Exit 0; build 0 warnings/0 errors; 349 passed, 0 failed, 0 skipped. |
+| `dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~VizzyProgramValidatorTests|FullyQualifiedName~PendingChangeRebaserTests|FullyQualifiedName~FileDataStoreTests"` | Exit 0; 60 passed, 0 failed, 0 skipped. |
+| `git diff --check` | Exit 0; no whitespace errors. |
+
+## Final Important Concerns
+
+- No new production concerns were found. The previously deferred Windows reserved-device-name, runtime-callback-exception, and duplicate-analysis performance items remain outside Task 4's Important regression scope.

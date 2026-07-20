@@ -193,6 +193,23 @@ namespace VizzyGPT.Core.Changes
                     nameof(resultXml));
             }
 
+            if (previewLines.Count < applied.Changes.Count)
+            {
+                throw new ArgumentException(
+                    "Preview lines must contain every deterministic patch change.",
+                    nameof(previewLines));
+            }
+
+            for (var index = 0; index < applied.Changes.Count; index++)
+            {
+                if (!string.Equals(previewLines[index], applied.Changes[index], StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        "Preview lines must begin with the exact deterministic patch changes.",
+                        nameof(previewLines));
+                }
+            }
+
             var expectedDependencies = PendingDependencyAnalyzer.Analyze(parsedBase, parsedPatch);
             RequireMatchingTargetFingerprints(expectedDependencies.TargetFingerprints, targetFingerprints);
             RequireMatchingDeclarationFingerprints(
@@ -366,7 +383,12 @@ namespace VizzyGPT.Core.Changes
 
                 if (operation.Node != null)
                 {
-                    RecordReferences(working, operation.Node.ToXElement(), declarations);
+                    var sameOperationDeclarations = GetSameOperationDeclarations(working, operation);
+                    RecordReferences(
+                        working,
+                        operation.Node.ToXElement(),
+                        declarations,
+                        sameOperationDeclarations);
                 }
 
                 if (operation.Type == PatchOperationType.RenameVariable ||
@@ -378,7 +400,11 @@ namespace VizzyGPT.Core.Changes
                 if (operation.Type == PatchOperationType.UpdateAttribute &&
                     string.Equals(operation.Attribute, "variableName", StringComparison.Ordinal))
                 {
-                    RecordDeclaration(working, DeclarationKind.Variable, operation.Value!, declarations);
+                    var target = ChangeFingerprintUtilities.ResolveSelector(working, operation.Target!);
+                    if (!string.Equals(target.Attribute("local")?.Value, "true", StringComparison.Ordinal))
+                    {
+                        RecordDeclaration(working, DeclarationKind.Variable, operation.Value!, declarations);
+                    }
                 }
 
                 ApplyOperation(working, operation);
@@ -479,7 +505,8 @@ namespace VizzyGPT.Core.Changes
         private static void RecordReferences(
             VizzyProgramDocument working,
             XElement subtree,
-            IDictionary<string, DeclarationFingerprint> declarations)
+            IDictionary<string, DeclarationFingerprint> declarations,
+            ISet<string>? sameOperationDeclarations = null)
         {
             foreach (var element in subtree.DescendantsAndSelf())
             {
@@ -487,15 +514,50 @@ namespace VizzyGPT.Core.Changes
                 if (variableName != null &&
                     !string.Equals(element.Attribute("local")?.Value, "true", StringComparison.Ordinal))
                 {
-                    RecordDeclaration(working, DeclarationKind.Variable, variableName, declarations);
+                    if (sameOperationDeclarations == null ||
+                        !sameOperationDeclarations.Contains(DeclarationKey(DeclarationKind.Variable, variableName)))
+                    {
+                        RecordDeclaration(working, DeclarationKind.Variable, variableName, declarations);
+                    }
                 }
 
                 var customNodeName = element.Attribute("customNodeName")?.Value;
                 if (customNodeName != null)
                 {
-                    RecordDeclaration(working, DeclarationKind.CustomNode, customNodeName, declarations);
+                    if (sameOperationDeclarations == null ||
+                        !sameOperationDeclarations.Contains(DeclarationKey(DeclarationKind.CustomNode, customNodeName)))
+                    {
+                        RecordDeclaration(working, DeclarationKind.CustomNode, customNodeName, declarations);
+                    }
                 }
             }
+        }
+
+        private static ISet<string> GetSameOperationDeclarations(
+            VizzyProgramDocument working,
+            PatchOperation operation)
+        {
+            var declarations = new HashSet<string>(StringComparer.Ordinal);
+            if (operation.Type != PatchOperationType.ReplaceNode || operation.Node == null)
+            {
+                return declarations;
+            }
+
+            var target = ChangeFingerprintUtilities.ResolveSelector(working, operation.Target!);
+            var parent = target.Parent;
+            if (parent != null &&
+                parent.Parent != null &&
+                ReferenceEquals(parent.Parent, working.Root) &&
+                string.Equals(parent.Name.LocalName, "Expressions", StringComparison.Ordinal) &&
+                parent.Name.NamespaceName.Length == 0 &&
+                string.Equals(operation.Node.Element, "CustomNode", StringComparison.Ordinal) &&
+                operation.Node.Attributes.TryGetValue("name", out var customNodeName) &&
+                !string.IsNullOrEmpty(customNodeName))
+            {
+                declarations.Add(DeclarationKey(DeclarationKind.CustomNode, customNodeName));
+            }
+
+            return declarations;
         }
 
         private static void RecordDeclaration(
@@ -513,13 +575,18 @@ namespace VizzyGPT.Core.Changes
 
             var baseName = origin.Snapshot.Attribute("name")?.Value
                 ?? throw new InvalidOperationException("A base declaration is missing its name.");
-            var key = ((int)kind).ToString(CultureInfo.InvariantCulture) + ":" + baseName;
+            var key = DeclarationKey(kind, baseName);
             if (!declarations.ContainsKey(key))
             {
                 declarations.Add(
                     key,
                     new DeclarationFingerprint(kind, baseName, ChangeFingerprintUtilities.ComputeHash(origin.Snapshot)));
             }
+        }
+
+        private static string DeclarationKey(DeclarationKind kind, string name)
+        {
+            return ((int)kind).ToString(CultureInfo.InvariantCulture) + ":" + name;
         }
 
         private static void ApplyOperation(VizzyProgramDocument working, PatchOperation operation)
