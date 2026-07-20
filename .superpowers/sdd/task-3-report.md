@@ -149,3 +149,18 @@ $env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.p
 
 - Build: PASS, 0 warnings, 0 errors.
 - Tests: failed 0, passed 259, skipped 0, total 259.
+
+## Review Regression Test Matrix
+
+- JSON parser safety: one unknown-member array nested beyond the explicit 64-level protocol limit must fail with a depth-related `PatchApplyException`, avoiding unbounded recursive parsing.
+- XML character safety: three `Apply` cases use RFC-valid escaped `\u0001` strings through `updateAttribute`, `addVariable` values, and `NodeSpec` attributes; each must reject with `PatchApplyException` and preserve the input document hash.
+- Exact selector-number binding: nine accepted forms cover `Int32` minimum and maximum, negative-zero forms, signed exponents, long fractional zero tails, and exponent-scaled boundaries. Ten rejected forms cover just-outside bounds, near-boundary fractions, fractional exponents, and enormous positive and negative exponents.
+- Duplicate protocol members: three cases cover the patch envelope, an operation, and a node selector.
+- Parser envelope: three non-object top-level JSON values and one valid object with trailing content must reject.
+
+## Review Regression Static Checks
+
+- Tests are intentionally not run in this test-only worker so the controller can capture RED.
+- Scope is limited to the test suite and this Task 3 report; no production code is modified.
+- `git diff --check` completed with no whitespace errors; the working tree reports existing LF-to-CRLF conversion warnings only.
+- Final ownership review completed: only the two authorized files are modified.

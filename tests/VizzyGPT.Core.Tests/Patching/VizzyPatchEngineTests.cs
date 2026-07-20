@@ -36,6 +36,8 @@ namespace VizzyGPT.Core.Tests.Patching
             "value"
         };
 
+        private const int MaximumProtocolJsonNesting = 64;
+
         [TestCase("addVariable", PatchOperationType.AddVariable)]
         [TestCase("renameVariable", PatchOperationType.RenameVariable)]
         [TestCase("removeVariable", PatchOperationType.RemoveVariable)]
@@ -77,6 +79,38 @@ namespace VizzyGPT.Core.Tests.Patching
         public void Deserialize_rejects_unknown_json_members(string json)
         {
             AssertDeserializeRejected(json);
+        }
+
+        [TestCase("{\"baseHash\":\"hash\",\"baseHash\":\"other\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0,\"id\":1}}]}")]
+        public void Deserialize_rejects_duplicate_members_at_every_patch_protocol_level(string json)
+        {
+            AssertDeserializeRejected(json);
+        }
+
+        [TestCase("[]")]
+        [TestCase("null")]
+        [TestCase("0")]
+        public void Deserialize_rejects_non_object_top_level_json(string json)
+        {
+            AssertDeserializeRejected(json);
+        }
+
+        [Test]
+        public void Deserialize_rejects_trailing_content_after_a_valid_patch_object()
+        {
+            AssertDeserializeRejected(PatchJson(Op("removeNode", "target", Id(0))) + " null");
+        }
+
+        [Test]
+        public void Deserialize_rejects_unknown_array_value_beyond_the_protocol_depth_limit()
+        {
+            var json = "{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}],\"reviewPayload\":" + NestedArray(MaximumProtocolJsonNesting + 1) + "}";
+
+            var exception = Assert.Throws<PatchApplyException>(() => PatchDocument.Deserialize(json));
+
+            Assert.That(exception!.Message, Does.Contain("depth").IgnoreCase);
         }
 
         [TestCase("{/* comment */\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
@@ -162,6 +196,37 @@ namespace VizzyGPT.Core.Tests.Patching
             var document = PatchDocument.Deserialize("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":" + numberLiteral + "}}]}");
 
             Assert.That(document.Operations[0].Target!.Id, Is.EqualTo(expectedId));
+        }
+
+        [TestCase("2147483647", int.MaxValue)]
+        [TestCase("-2147483648", int.MinValue)]
+        [TestCase("-0", 0)]
+        [TestCase("-0.000000000000000000000000000000000000000", 0)]
+        [TestCase("1e+0", 1)]
+        [TestCase("10e-1", 1)]
+        [TestCase("42.000000000000000000000000000000000000000", 42)]
+        [TestCase("2.147483647e9", int.MaxValue)]
+        [TestCase("-2.147483648e9", int.MinValue)]
+        public void Deserialize_accepts_exact_int32_selector_number_normalizations(string numberLiteral, int expectedId)
+        {
+            var document = PatchDocument.Deserialize("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":" + numberLiteral + "}}]}");
+
+            Assert.That(document.Operations[0].Target!.Id, Is.EqualTo(expectedId));
+        }
+
+        [TestCase("2147483648")]
+        [TestCase("-2147483649")]
+        [TestCase("2147483647.1")]
+        [TestCase("-2147483648.1")]
+        [TestCase("1e-1")]
+        [TestCase("2147483647e-1")]
+        [TestCase("2.147483648e9")]
+        [TestCase("-2.147483649e9")]
+        [TestCase("1e999999999999999")]
+        [TestCase("1e-999999999999999")]
+        public void Deserialize_rejects_non_int32_or_nonintegral_selector_number_normalizations(string numberLiteral)
+        {
+            AssertDeserializeRejected("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":" + numberLiteral + "}}]}");
         }
 
         [TestCase(null)]
@@ -703,6 +768,17 @@ namespace VizzyGPT.Core.Tests.Patching
                 Op("updateAttribute", "target", Id(0), "attribute", attribute, "value", "value"));
         }
 
+        [TestCase("{\"type\":\"updateAttribute\",\"target\":{\"id\":0},\"attribute\":\"text\",\"value\":\"\\u0001\"}")]
+        [TestCase("{\"type\":\"addVariable\",\"name\":\"yaw\",\"value\":\"\\u0001\"}")]
+        [TestCase("{\"type\":\"insertAfter\",\"target\":{\"id\":0},\"node\":{\"element\":\"Log\",\"attributes\":{\"text\":\"\\u0001\"},\"children\":[]}}")]
+        public void Apply_rejects_xml_invalid_control_characters_from_patch_strings_without_mutating_input(string operationJson)
+        {
+            var document = Minimal();
+            var patch = PatchDocument.Deserialize(RawPatchJson(VizzyProgramHash.Compute(document), operationJson));
+
+            AssertApplyRejectedWithoutMutation(document, patch);
+        }
+
         [Test]
         public void Apply_runs_operations_in_order_and_returns_one_deterministic_human_readable_line_per_operation()
         {
@@ -781,6 +857,9 @@ namespace VizzyGPT.Core.Tests.Patching
         private static string PatchJson(string operationJson) =>
             PatchJson(JObject.Parse(operationJson));
 
+        private static string RawPatchJson(string baseHash, string operationJson) =>
+            "{\"baseHash\":\"" + baseHash + "\",\"summary\":\"Test patch\",\"operations\":[" + operationJson + "]}";
+
         private static string PatchJson(string baseHash, params JObject[] operations)
         {
             return new JObject
@@ -808,6 +887,9 @@ namespace VizzyGPT.Core.Tests.Patching
         }
 
         private static JObject Id(int id) => new JObject { ["id"] = id };
+
+        private static string NestedArray(int depth) =>
+            new string('[', depth) + "0" + new string(']', depth);
 
         private static JObject Path(string path) => new JObject { ["path"] = path };
 
