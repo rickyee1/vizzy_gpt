@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Xml;
 using System.Xml.Linq;
 using VizzyGPT.Core.Programs;
 
@@ -107,16 +108,19 @@ namespace VizzyGPT.Core.Patching
         {
             var variables = GetVariablesContainer(document);
             var name = operation.Name!;
+            var value = operation.Value ?? "0";
             if (FindVariables(variables, name).Count != 0)
             {
                 throw new PatchApplyException("Variable '" + name + "' already exists.");
             }
 
+            ValidateXmlAttributeValue(name, "Variable name");
+            ValidateXmlAttributeValue(value, "Variable value");
             variables.Add(
                 new XElement(
                     "Variable",
                     new XAttribute("name", name),
-                    new XAttribute("number", operation.Value ?? "0")));
+                    new XAttribute("number", value)));
             return "Added variable '" + SingleLine(name) + "'.";
         }
 
@@ -136,6 +140,7 @@ namespace VizzyGPT.Core.Patching
                 throw new PatchApplyException("Variable '" + newName + "' already exists.");
             }
 
+            ValidateXmlAttributeValue(newName, "New variable name");
             declarations[0].SetAttributeValue("name", newName);
             foreach (var element in document.Root.DescendantsAndSelf())
             {
@@ -241,6 +246,7 @@ namespace VizzyGPT.Core.Patching
                 throw new PatchApplyException("Attribute '" + attribute + "' cannot be updated by a patch.");
             }
 
+            ValidateXmlAttributeValue(operation.Value!, "Attribute '" + attribute + "'");
             target.SetAttributeValue(attribute, operation.Value!);
             return "Updated attribute '" + SingleLine(attribute) + "' on " + Describe(operation.Target!) + ".";
         }
@@ -330,6 +336,18 @@ namespace VizzyGPT.Core.Patching
         private static bool HasUnqualifiedName(XElement element, string name)
         {
             return element.Name.NamespaceName.Length == 0 && string.Equals(element.Name.LocalName, name, StringComparison.Ordinal);
+        }
+
+        private static void ValidateXmlAttributeValue(string value, string context)
+        {
+            try
+            {
+                XmlConvert.VerifyXmlChars(value);
+            }
+            catch (XmlException exception)
+            {
+                throw new PatchApplyException(context + " contains characters that are not valid in XML.", exception);
+            }
         }
 
         private static string Describe(NodeSelector selector)

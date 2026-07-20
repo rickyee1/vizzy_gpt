@@ -75,6 +75,8 @@ namespace VizzyGPT.Core.Patching
                     throw new PatchApplyException("Node attribute '" + attribute.Key + "' cannot be null.");
                 }
 
+                ValidateXmlCharacters(attribute.Value, "Node attribute '" + attribute.Key + "'");
+
                 if (string.Equals(attribute.Key, "id", StringComparison.Ordinal) &&
                     !int.TryParse(attribute.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
                 {
@@ -97,6 +99,18 @@ namespace VizzyGPT.Core.Patching
             }
 
             return result;
+        }
+
+        private static void ValidateXmlCharacters(string value, string context)
+        {
+            try
+            {
+                XmlConvert.VerifyXmlChars(value);
+            }
+            catch (XmlException exception)
+            {
+                throw new PatchApplyException(context + " contains characters that are not valid in XML.", exception);
+            }
         }
 
         private static void ValidateUnqualifiedName(string name, string kind)

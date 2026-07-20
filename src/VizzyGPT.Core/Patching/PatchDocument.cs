@@ -113,6 +113,8 @@ namespace VizzyGPT.Core.Patching
 
         private sealed class JsonSyntaxValidator
         {
+            private const int MaximumNestingDepth = 64;
+
             private readonly string json;
             private readonly List<NumberReplacement> numberReplacements = new List<NumberReplacement>();
             private int index;
@@ -125,7 +127,7 @@ namespace VizzyGPT.Core.Patching
             public string Validate()
             {
                 SkipWhitespace();
-                ParseValue();
+                ParseValue(0);
                 SkipWhitespace();
                 if (index != json.Length)
                 {
@@ -150,7 +152,7 @@ namespace VizzyGPT.Core.Patching
                 return normalized.ToString();
             }
 
-            private void ParseValue()
+            private void ParseValue(int containerDepth)
             {
                 if (index >= json.Length)
                 {
@@ -160,10 +162,10 @@ namespace VizzyGPT.Core.Patching
                 switch (json[index])
                 {
                     case '{':
-                        ParseObject();
+                        ParseObject(EnterContainer(containerDepth));
                         return;
                     case '[':
-                        ParseArray();
+                        ParseArray(EnterContainer(containerDepth));
                         return;
                     case '"':
                         ParseString();
@@ -196,7 +198,7 @@ namespace VizzyGPT.Core.Patching
                 }
             }
 
-            private void ParseObject()
+            private void ParseObject(int containerDepth)
             {
                 Expect('{');
                 SkipWhitespace();
@@ -216,7 +218,7 @@ namespace VizzyGPT.Core.Patching
                     SkipWhitespace();
                     Expect(':');
                     SkipWhitespace();
-                    ParseValue();
+                    ParseValue(containerDepth);
                     SkipWhitespace();
                     if (TryConsume('}'))
                     {
@@ -228,7 +230,7 @@ namespace VizzyGPT.Core.Patching
                 }
             }
 
-            private void ParseArray()
+            private void ParseArray(int containerDepth)
             {
                 Expect('[');
                 SkipWhitespace();
@@ -239,7 +241,7 @@ namespace VizzyGPT.Core.Patching
 
                 while (true)
                 {
-                    ParseValue();
+                    ParseValue(containerDepth);
                     SkipWhitespace();
                     if (TryConsume(']'))
                     {
@@ -249,6 +251,17 @@ namespace VizzyGPT.Core.Patching
                     Expect(',');
                     SkipWhitespace();
                 }
+            }
+
+            private int EnterContainer(int containerDepth)
+            {
+                var nextDepth = containerDepth + 1;
+                if (nextDepth > MaximumNestingDepth)
+                {
+                    ThrowSyntaxError("JSON nesting depth exceeds protocol maximum of 64");
+                }
+
+                return nextDepth;
             }
 
             private void ParseString()

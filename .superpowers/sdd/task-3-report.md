@@ -169,3 +169,41 @@ $env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.p
 
 - The depth regression now requires the stable public message fragment `JSON nesting depth exceeds protocol maximum of 64`, distinguishing the custom protocol parser's explicit guard from Json.NET's later `MaxDepth` fallback.
 - Tests remain intentionally unrun so the controller can capture RED.
+
+## Parser Bounds and XML Value Review Fix
+
+### Implementation
+
+- The recursive JSON syntax validator counts each object or array as one container level, with the top-level container at level 1, and rejects entry into level 65 with the stable protocol message.
+- `XmlConvert.VerifyXmlChars` now validates every patch-controlled string before it is stored as an XML attribute: recursive `NodeSpec` attribute values, `updateAttribute` values, `addVariable` names and values, and `renameVariable` replacement names and references.
+- XML validation occurs in operation order against the cloned document and converts `XmlException` failures to `PatchApplyException`, preserving the input document on failure.
+
+### RED Verification
+
+```powershell
+$env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
+
+- Build: PASS, 0 warnings, 0 errors.
+- Tests: failed 4, passed 285, skipped 0, total 289.
+- Failures: the parser-owned depth-message case and the three XML-invalid `\u0001` write cases.
+
+### GREEN Verification
+
+Focused Task 3 command:
+
+```powershell
+dotnet test tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter 'FullyQualifiedName~VizzyGPT.Core.Tests.Patching.VizzyPatchEngineTests'
+```
+
+- Tests: failed 0, passed 272, skipped 0, total 272.
+
+Full command:
+
+```powershell
+$env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
+
+- Build: PASS, 0 warnings, 0 errors.
+- Tests: failed 0, passed 289, skipped 0, total 289.
+- A direct focused run without the repository wrapper built successfully but the sandbox blocked `testhost` parent-process inspection; the focused no-build run succeeded after the wrapper prepared its sandbox-compatible testhost configuration.
