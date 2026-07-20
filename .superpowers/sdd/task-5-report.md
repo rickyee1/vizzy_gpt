@@ -176,3 +176,62 @@ References:
 
 - The compatibility fallback body vocabulary is intentionally semantic rather than tied to one provider-specific error code. Phase B should keep the status-and-body conjunction narrow and covered by these tests.
 - The 64 KiB contract applies to final UTF-8 context, so truncation must operate on UTF-8 boundaries and must not split surrogate pairs.
+
+# Task 5 Phase B Report
+
+## Production Scope
+
+Implemented only the owned API, context, and security files. Tests, project files, and prior production source were not modified. The implementation is transport-neutral and makes no real network requests.
+
+## Commands And Results
+
+1. Initial RED:
+
+   ```powershell
+   dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --filter "FullyQualifiedName~OpenAiClientTests|FullyQualifiedName~SecretRedactorTests" --no-restore
+   ```
+
+   Result: build failed with the expected 13 compile errors, all for missing `VizzyGPT.Core.Api` / `VizzyGPT.Core.Security` Task 5 types.
+
+2. First post-implementation focused attempt used the same command. Both assemblies compiled, but VSTest aborted before executing tests because the sandboxed test host could not query its parent process (`Win32Exception (5)`). The repository wrapper's `CODEX_SHELL` path is required in this environment.
+
+3. First executable full run:
+
+   ```powershell
+   & powershell -ExecutionPolicy Bypass -File 'tools\Test-Core.ps1'; $code=$LASTEXITCODE; git status --short; exit $code
+   ```
+
+   Result: build 0 warnings / 0 errors; 404 passed, 4 failed, 408 total. Two production issues were identified and fixed: bracketed IPv6 loopback host representation and large-mode detection for preserved source whitespace. The other two failures were the schema-test issue documented below.
+
+4. Full rerun after those fixes, using the same wrapper command: build 0 warnings / 0 errors; 406 passed, 2 failed, 408 total.
+
+5. Focused command after the wrapper prepared the parent-process-safe Release test host:
+
+   ```powershell
+   dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~OpenAiClientTests|FullyQualifiedName~SecretRedactorTests"
+   ```
+
+   Result: 47 passed, 2 failed, 49 total. The brief's exact filter does not include the separately named `ContextBuilderTests` fixture.
+
+6. Complete Task 5 selection:
+
+   ```powershell
+   dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~OpenAiClientTests|FullyQualifiedName~ContextBuilderTests|FullyQualifiedName~SecretRedactorTests"
+   ```
+
+   Result: 57 passed, 2 failed, 59 total. Every Task 5 case passes except the Responses and Chat strict-schema tests described below.
+
+## Self-Review
+
+- Automatic request counts are bounded: one normal request; one request for non-fallback HTTP/transport failures; at most two for endpoint fallback; at most two for same-endpoint schema repair; and at most three when an Auto fallback response itself needs the one repair. No transport retry loop exists.
+- Cancellation and timeout exceptions are not caught. HTTP failures are redacted before constructing `OpenAiApiException`.
+- Request bodies never contain the API key; it appears only in the required `Authorization` header. All exposed API/model diagnostics pass through exact-key, bearer, and JSON `api_key` redaction and single-line bounding.
+- Request/response byte arrays and header/metric/diagnostic collections are defensively copied with ordinal dictionaries where required.
+- Context truncation is UTF-8 bounded, surrogate-safe, deterministic, and performed after line normalization and redaction.
+- No real transport, network endpoint, or live API key was used.
+
+## Blocking Test Concern
+
+The two remaining tests fail inside `AssertAllObjectSchemasAreStrict` at `OpenAiClientTests.cs:404`, before evaluating the produced schema. The helper traverses every descendant `JObject` and unconditionally casts `candidate["type"]` to `string`. Each operation variant is also required later by the same test to expose `item["properties"]["type"]["const"]`; therefore its `properties` object necessarily has a child named `type` whose value is a `JObject`. Casting that object to `string` throws `ArgumentException: Can not convert Object to String.`
+
+This is contradictory for any JSON schema represented by a parsed Newtonsoft `JObject`: satisfying the later discriminator assertion necessarily triggers the earlier cast. Production cannot make both assertions pass, and strict ownership forbids correcting the test helper to guard for `JTokenType.String`. The implementation retains the required ten strict operation variants rather than weakening the schema or adding test-specific production behavior.
