@@ -235,3 +235,18 @@ Implemented only the owned API, context, and security files. Tests, project file
 The two remaining tests fail inside `AssertAllObjectSchemasAreStrict` at `OpenAiClientTests.cs:404`, before evaluating the produced schema. The helper traverses every descendant `JObject` and unconditionally casts `candidate["type"]` to `string`. Each operation variant is also required later by the same test to expose `item["properties"]["type"]["const"]`; therefore its `properties` object necessarily has a child named `type` whose value is a `JObject`. Casting that object to `string` throws `ArgumentException: Can not convert Object to String.`
 
 This is contradictory for any JSON schema represented by a parsed Newtonsoft `JObject`: satisfying the later discriminator assertion necessarily triggers the earlier cast. Production cannot make both assertions pass, and strict ownership forbids correcting the test helper to guard for `JTokenType.String`. The implementation retains the required ten strict operation variants rather than weakening the schema or adding test-specific production behavior.
+
+## Controller Reproduction and Harness Correction
+
+The controller independently reproduced exactly two failures at `OpenAiClientTests.cs:404`, matching the blocking concern above. Both failures occurred before schema assertions because traversal treated every descendant `JObject` with a child named `type` as if that child were a JSON string. In particular, an operation variant's `properties` object has a `type` child whose value is the discriminator schema object containing `const`.
+
+The test helper predicate now classifies a candidate as an object schema only when its own `type` token has `JTokenType.String` and the string value is ordinal-equal to `object`. No production code or schema assertion changed.
+
+### Harness Correction Verification
+
+| Command | Result |
+| --- | --- |
+| `powershell -ExecutionPolicy Bypass -File tools\Test-Core.ps1` | Build 0 warnings / 0 errors; 408 passed, 0 failed, 0 skipped. |
+| `dotnet test tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~OpenAiClientTests\|FullyQualifiedName~ContextBuilderTests\|FullyQualifiedName~SecretRedactorTests"` | 59 passed, 0 failed, 0 skipped. |
+
+The initial direct focused invocation built successfully but the Windows testhost parent-process query was denied before case execution. Running the repository wrapper applied its existing workaround; the subsequent focused no-build command then completed normally.

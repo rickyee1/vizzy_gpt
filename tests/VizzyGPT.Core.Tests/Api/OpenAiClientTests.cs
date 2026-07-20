@@ -401,7 +401,9 @@ namespace VizzyGPT.Core.Tests.Api
         {
             var objectSchemas = schema.DescendantsAndSelf()
                 .OfType<JObject>()
-                .Where(candidate => string.Equals((string?)candidate["type"], "object", StringComparison.Ordinal));
+                .Where(candidate =>
+                    candidate["type"]?.Type == JTokenType.String &&
+                    string.Equals(candidate["type"]!.Value<string>(), "object", StringComparison.Ordinal));
 
             foreach (var objectSchema in objectSchemas)
             {
