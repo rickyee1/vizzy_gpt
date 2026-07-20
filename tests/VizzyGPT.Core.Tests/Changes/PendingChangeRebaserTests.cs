@@ -101,6 +101,115 @@ namespace VizzyGPT.Core.Tests.Changes
             Assert.That(pending.TargetFingerprints.All(item => !string.IsNullOrEmpty(item.Hash)), Is.True);
         }
 
+        [TestCase(PatchOperationType.RenameVariable)]
+        [TestCase(PatchOperationType.RemoveVariable)]
+        public void Named_variable_operations_fingerprint_the_base_declaration_and_conflict_after_it_changes(
+            PatchOperationType operationType)
+        {
+            var document = VariableOperationDocument();
+            var operation = operationType == PatchOperationType.RenameVariable
+                ? new PatchOperation(operationType, name: "pitch", newName: "yaw")
+                : new PatchOperation(operationType, name: "pitch");
+
+            var pending = CreatePending(document, operation);
+
+            AssertDeclaration(pending, DeclarationKind.Variable, "pitch");
+
+            var current = VariableOperationDocument();
+            current.Root.Element("Variables")!.Element("Variable")!.SetAttributeValue("number", "9");
+            AssertConflict(pending, current);
+        }
+
+        [Test]
+        public void Update_variableName_fingerprints_the_referenced_base_declaration_and_conflicts_after_it_changes()
+        {
+            var document = VariableAttributeDocument();
+            var operation = new PatchOperation(
+                PatchOperationType.UpdateAttribute,
+                target: new NodeSelector(2, null),
+                attribute: "variableName",
+                value: "pitch");
+
+            var pending = CreatePending(document, operation);
+
+            AssertDeclaration(pending, DeclarationKind.Variable, "pitch");
+
+            var current = VariableAttributeDocument();
+            current.Root.Element("Variables")!.Element("Variable")!.SetAttributeValue("number", "9");
+            AssertConflict(pending, current);
+        }
+
+        [Test]
+        public void PendingChange_accepts_update_of_an_id_introduced_by_an_earlier_operation()
+        {
+            var document = VariableOperationDocument();
+            var inserted = new NodeSpec(
+                "Log",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["id"] = "2",
+                    ["text"] = "inserted"
+                },
+                Array.Empty<NodeSpec>());
+            var pending = CreatePending(
+                document,
+                new PatchOperation(
+                    PatchOperationType.InsertAfter,
+                    target: new NodeSelector(1, null),
+                    node: inserted),
+                new PatchOperation(
+                    PatchOperationType.UpdateAttribute,
+                    target: new NodeSelector(2, null),
+                    attribute: "text",
+                    value: "updated"));
+
+            Assert.That(pending.TargetFingerprints, Has.Count.EqualTo(1));
+            Assert.That(pending.TargetFingerprints[0].Selector.Id, Is.EqualTo(1));
+            Assert.That(pending.DeclarationFingerprints, Is.Empty);
+            Assert.That(VizzyProgramDocument.Parse(pending.ResultXml).FindById(2)!.Attribute("text")!.Value, Is.EqualTo("updated"));
+        }
+
+        [Test]
+        public void PendingChange_accepts_a_NodeSpec_reference_to_a_variable_added_by_an_earlier_operation()
+        {
+            var document = VariableOperationDocument();
+            var inserted = new NodeSpec(
+                "SetVariable",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["id"] = "2",
+                },
+                new[]
+                {
+                    new NodeSpec(
+                        "Variable",
+                        new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["local"] = "false",
+                            ["variableName"] = "yaw"
+                        },
+                        Array.Empty<NodeSpec>()),
+                    new NodeSpec(
+                        "Constant",
+                        new Dictionary<string, string>(StringComparer.Ordinal) { ["number"] = "0" },
+                        Array.Empty<NodeSpec>())
+                });
+            var pending = CreatePending(
+                document,
+                new PatchOperation(PatchOperationType.AddVariable, name: "yaw"),
+                new PatchOperation(
+                    PatchOperationType.InsertAfter,
+                    target: new NodeSelector(1, null),
+                    node: inserted));
+
+            Assert.That(pending.TargetFingerprints, Has.Count.EqualTo(1));
+            Assert.That(pending.TargetFingerprints[0].Selector.Id, Is.EqualTo(1));
+            Assert.That(pending.DeclarationFingerprints, Is.Empty);
+            var result = VizzyProgramDocument.Parse(pending.ResultXml);
+            Assert.That(result.Root.Element("Variables")!.Elements("Variable").Any(item => item.Attribute("name")?.Value == "yaw"), Is.True);
+            Assert.That(result.FindById(2)!.Descendants("Variable").Single().Attribute("variableName")!.Value, Is.EqualTo("yaw"));
+        }
+
         [Test]
         public void TryRebase_returns_unchanged_with_the_stored_result_when_hashes_match()
         {
@@ -213,6 +322,22 @@ namespace VizzyGPT.Core.Tests.Changes
                 SessionFor(document),
                 new DateTime(2026, 7, 21, 4, 5, 6, DateTimeKind.Utc));
 
+        private static PendingChange CreatePending(
+            VizzyProgramDocument document,
+            params PatchOperation[] operations)
+        {
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Review regression patch",
+                operations);
+            var result = VizzyPatchEngine.Apply(document, patch);
+            var session = ChangeSession.Create(document, patch, result, ValidReport());
+            return PendingChange.Create(
+                "program-review",
+                session,
+                new DateTime(2026, 7, 21, 5, 0, 0, DateTimeKind.Utc));
+        }
+
         private static ChangeSession SessionFor(VizzyProgramDocument document)
         {
             var patch = PatchFor(document);
@@ -251,5 +376,14 @@ namespace VizzyGPT.Core.Tests.Changes
             "<Instructions><Log id='1' text='before' /></Instructions>" +
             "<Expressions><CustomNode name='guidance'><Constant number='1' /></CustomNode></Expressions>" +
             "</Program>");
+
+        private static VizzyProgramDocument VariableOperationDocument() => VizzyProgramDocument.Parse(
+            "<Program><Variables><Variable name='pitch' number='0' /></Variables>" +
+            "<Instructions><Log id='1' text='before' /></Instructions><Expressions /></Program>");
+
+        private static VizzyProgramDocument VariableAttributeDocument() => VizzyProgramDocument.Parse(
+            "<Program><Variables><Variable name='pitch' number='0' /></Variables>" +
+            "<Instructions><SetVariable id='1'><Variable id='2' local='false' />" +
+            "<Constant number='0' /></SetVariable></Instructions><Expressions /></Program>");
     }
 }

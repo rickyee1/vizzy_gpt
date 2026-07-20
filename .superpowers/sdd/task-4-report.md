@@ -152,7 +152,22 @@ namespace VizzyGPT.Core.Storage
 | `git status --short -- UserData` plus scoped `UserData` inspection | Clean; `UserData` directory is absent, so the test runs created no game-data files. |
 | `git diff --cached --check` | Exit 0; no whitespace errors. |
 
+## Independent Review Regression Matrix
+
+This test-only follow-up adds 24 deterministic cases. They are intentionally not executed here because the controller owns the RED capture.
+
+| File | Added cases | Public behavior |
+| --- | ---: | --- |
+| `Validation/VizzyProgramValidatorTests.cs` | 11 | Reject nonnumeric and out-of-`Int32` IDs with `InvalidId`; classify catalog instructions/expressions by toolbox section for root and nested placement; reject structural containers under invalid direct parents; preserve pure XML, catalog, runtime ordering. |
+| `Changes/PendingChangeRebaserTests.cs` | 5 | Fingerprint `renameVariable`, `removeVariable`, and `updateAttribute(variableName)` base declarations and conflict after declaration edits; allow selectors and declaration references introduced by earlier operations without requiring base fingerprints. |
+| `Storage/FileDataStoreTests.cs` | 8 | Reject self-consistent result snapshots that are not patch output; reject removed, empty, or altered target/declaration fingerprint sets; reject a loaded payload whose `ProgramFingerprint` differs from the requested key. |
+
+## Deferred Minor Findings
+
+- Windows reserved device names such as `CON`, `PRN`, and `NUL` are not covered by this Task 4 regression pass. Revisit filename hardening during final branch review.
+- Runtime serializer callback exception semantics are not specified by this Task 4 regression pass. Decide whether exceptions propagate or become validation issues during final branch review.
+
 ## Concerns
 
 - A direct Debug `dotnet test` invocation builds successfully but the Codex Windows environment denies the testhost parent-process query. The repository wrapper applies its existing `MSTest.EnableParentProcessQuery=false` workaround; all focused and full tests pass with the wrapper-prepared Release testhost.
-- No production-code concerns remain from self-review.
+- Independent review Important findings are now represented by unexecuted RED contracts; production changes remain outside this commit.

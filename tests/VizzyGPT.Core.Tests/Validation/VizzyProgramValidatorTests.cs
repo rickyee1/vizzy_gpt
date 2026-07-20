@@ -35,6 +35,19 @@ namespace VizzyGPT.Core.Tests.Validation
             AssertError(report, "DuplicateId", "7");
         }
 
+        [TestCase("not-a-number")]
+        [TestCase("2147483648")]
+        [TestCase("-2147483649")]
+        public void Validate_reports_ids_that_are_not_Int32_values(string id)
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><Event id='" + id + "' style='flight-start' /></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, Catalog());
+
+            AssertError(report, "InvalidId", id);
+        }
+
         [Test]
         public void Validate_reports_styles_absent_from_the_ordinal_catalog()
         {
@@ -80,6 +93,49 @@ namespace VizzyGPT.Core.Tests.Validation
             var report = Validator().Validate(document, Catalog());
 
             AssertError(report, "InvalidChildPlacement", "Constant");
+        }
+
+        [Test]
+        public void Validate_reports_a_catalog_instruction_placed_directly_under_root_Expressions()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions /><Expressions><DynamicInstruction id='1' /></Expressions></Program>");
+
+            var report = Validator().Validate(document, Catalog());
+
+            AssertError(report, "InvalidChildPlacement", "DynamicInstruction");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Validate_reports_a_catalog_expression_placed_directly_under_any_Instructions_container(
+            bool nested)
+        {
+            var instructions = nested
+                ? "<While id='1'><Instructions><DynamicExpression id='2' /></Instructions></While>"
+                : "<DynamicExpression id='2' />";
+            var document = Document(
+                "<Program><Variables /><Instructions>" + instructions + "</Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, Catalog());
+
+            AssertError(report, "InvalidChildPlacement", "DynamicExpression");
+        }
+
+        [TestCase("Instructions", "Variables")]
+        [TestCase("Instructions", "Expressions")]
+        [TestCase("Expressions", "Instructions")]
+        [TestCase("Variables", "Instructions")]
+        public void Validate_reports_structural_containers_in_invalid_direct_parent_positions(
+            string parentName,
+            string childName)
+        {
+            var root = XElement.Parse(ValidProgramXml);
+            root.Element(parentName)!.Add(new XElement(childName));
+
+            var report = Validator().Validate(Document(root), Catalog());
+
+            AssertError(report, "InvalidChildPlacement", childName);
         }
 
         [Test]
@@ -135,6 +191,20 @@ namespace VizzyGPT.Core.Tests.Validation
             Assert.That(report.Warnings, Is.EqualTo(new[] { runtimeIssue }));
         }
 
+        [Test]
+        public void Validate_keeps_new_id_and_placement_errors_before_catalog_and_runtime_issues()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><DynamicExpression id='invalid' style='unknown-style' /></Instructions><Expressions /></Program>");
+            var runtimeIssue = new ValidationIssue(ValidationSeverity.Warning, "RuntimeSerializer", "Runtime warning");
+
+            var report = new VizzyProgramValidator(_ => runtimeIssue).Validate(document, Catalog());
+
+            Assert.That(
+                report.Issues.Select(issue => issue.Code),
+                Is.EqualTo(new[] { "InvalidId", "InvalidChildPlacement", "UnknownStyle", "RuntimeSerializer" }));
+        }
+
         private const string ValidProgramXml =
             "<Program><Variables><Variable name='pitch' number='0' /></Variables>" +
             "<Instructions><Event id='1' event='FlightStart' style='flight-start' /></Instructions>" +
@@ -145,8 +215,8 @@ namespace VizzyGPT.Core.Tests.Validation
         private static VizzyNodeCatalog Catalog() => VizzyNodeCatalog.FromToolboxXml(
             "<VizzyToolbox><Styles>" +
             "<Style id='flight-start' /><Style id='log' /><Style id='set-variable' />" +
-            "</Styles><Instructions><Event /><Log /><SetVariable /></Instructions>" +
-            "<Expressions><Constant /><Variable /><CustomNode /></Expressions></VizzyToolbox>");
+            "</Styles><Instructions><Event /><Log /><SetVariable /><While /><DynamicInstruction /></Instructions>" +
+            "<Expressions><Constant /><Variable /><CustomNode /><DynamicExpression /></Expressions></VizzyToolbox>");
 
         private static VizzyProgramDocument Document(string xml) => VizzyProgramDocument.Parse(xml);
 

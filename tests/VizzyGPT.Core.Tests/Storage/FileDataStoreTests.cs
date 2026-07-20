@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using VizzyGPT.Core.Changes;
@@ -147,6 +149,74 @@ namespace VizzyGPT.Core.Tests.Storage
             Assert.That(callerMutated, Is.False);
         }
 
+        [Test]
+        public async Task Load_rejects_self_consistent_result_xml_and_hash_that_are_not_the_patch_output()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var pending = CreatePending("program-result-integrity", "patched");
+            await store.SavePendingAsync(pending);
+            MutatePendingJson(
+                temporary.Path,
+                json =>
+                {
+                    json["resultXml"] = pending.BaseXml;
+                    json["resultHash"] = pending.BaseHash;
+                });
+
+            await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
+        }
+
+        [TestCase("targetFingerprints", "remove")]
+        [TestCase("targetFingerprints", "empty")]
+        [TestCase("targetFingerprints", "alter")]
+        [TestCase("declarationFingerprints", "remove")]
+        [TestCase("declarationFingerprints", "empty")]
+        [TestCase("declarationFingerprints", "alter")]
+        public async Task Load_rejects_fingerprint_sets_that_do_not_match_recomputation(
+            string propertyName,
+            string mutation)
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var pending = CreatePendingWithDeclaration("program-fingerprint-integrity");
+            await store.SavePendingAsync(pending);
+            MutatePendingJson(
+                temporary.Path,
+                json =>
+                {
+                    if (string.Equals(mutation, "remove", StringComparison.Ordinal))
+                    {
+                        json.Remove(propertyName);
+                    }
+                    else if (string.Equals(mutation, "empty", StringComparison.Ordinal))
+                    {
+                        json[propertyName] = new JArray();
+                    }
+                    else
+                    {
+                        var fingerprints = (JArray)json[propertyName]!;
+                        ((JObject)fingerprints[0]!)["hash"] = new string('0', 64);
+                    }
+                });
+
+            await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
+        }
+
+        [Test]
+        public async Task Load_rejects_a_file_whose_programFingerprint_differs_from_the_requested_fingerprint()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var pending = CreatePending("program-requested", "patched");
+            await store.SavePendingAsync(pending);
+            MutatePendingJson(
+                temporary.Path,
+                json => json["programFingerprint"] = "program-other");
+
+            await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
+        }
+
         private static PendingChange CreatePending(string fingerprint, string revision)
         {
             var document = VizzyProgramDocument.Parse(
@@ -173,6 +243,61 @@ namespace VizzyGPT.Core.Tests.Storage
                 : new DateTime(2026, 7, 21, 0, 0, 0, DateTimeKind.Utc);
 
             return PendingChange.Create(fingerprint, session, createdUtc);
+        }
+
+        private static PendingChange CreatePendingWithDeclaration(string fingerprint)
+        {
+            var document = VizzyProgramDocument.Parse(
+                "<Program><Variables><Variable name='pitch' number='0' /></Variables>" +
+                "<Instructions><Log id='1' text='before' variableName='pitch' /></Instructions>" +
+                "<Expressions /></Program>");
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Update referenced target",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.UpdateAttribute,
+                        target: new NodeSelector(1, null),
+                        attribute: "text",
+                        value: "after")
+                });
+            var patchResult = VizzyPatchEngine.Apply(document, patch);
+            var session = ChangeSession.Create(
+                document,
+                patch,
+                patchResult,
+                new ValidationReport(Array.Empty<ValidationIssue>()));
+            return PendingChange.Create(
+                fingerprint,
+                session,
+                new DateTime(2026, 7, 21, 1, 0, 0, DateTimeKind.Utc));
+        }
+
+        private static async Task AssertLoadRejectedAsync(IDataStore store, string programFingerprint)
+        {
+            Exception? failure = null;
+            try
+            {
+                _ = await store.LoadPendingAsync(programFingerprint);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            Assert.That(failure, Is.Not.Null);
+        }
+
+        private static void MutatePendingJson(string root, Action<JObject> mutation)
+        {
+            var path = Directory.GetFiles(root, "*.json", SearchOption.AllDirectories).Single();
+            var json = JObject.Parse(File.ReadAllText(path));
+            mutation(json);
+            File.WriteAllText(
+                path,
+                json.ToString(Formatting.None),
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
 
         private static void AssertPendingEquivalent(PendingChange? actual, PendingChange expected)
