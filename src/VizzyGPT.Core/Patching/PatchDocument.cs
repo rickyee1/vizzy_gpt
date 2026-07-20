@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -57,10 +59,10 @@ namespace VizzyGPT.Core.Patching
 
             try
             {
-                ValidateJsonProtocolSyntax(json);
+                var normalizedJson = ValidateJsonProtocolSyntax(json);
 
                 JObject root;
-                using (var stringReader = new StringReader(json))
+                using (var stringReader = new StringReader(normalizedJson))
                 using (var jsonReader = new JsonTextReader(stringReader))
                 {
                     jsonReader.DateParseHandling = DateParseHandling.None;
@@ -104,57 +106,491 @@ namespace VizzyGPT.Core.Patching
             }
         }
 
-        private static void ValidateJsonProtocolSyntax(string json)
+        private static string ValidateJsonProtocolSyntax(string json)
         {
-            var inString = false;
-            var escaped = false;
+            return new JsonSyntaxValidator(json).Validate();
+        }
 
-            for (var index = 0; index < json.Length; index++)
+        private sealed class JsonSyntaxValidator
+        {
+            private readonly string json;
+            private readonly List<NumberReplacement> numberReplacements = new List<NumberReplacement>();
+            private int index;
+
+            public JsonSyntaxValidator(string json)
             {
-                var current = json[index];
-                if (inString)
-                {
-                    if (escaped)
-                    {
-                        escaped = false;
-                    }
-                    else if (current == '\\')
-                    {
-                        escaped = true;
-                    }
-                    else if (current == '"')
-                    {
-                        inString = false;
-                    }
+                this.json = json;
+            }
 
-                    continue;
+            public string Validate()
+            {
+                SkipWhitespace();
+                ParseValue();
+                SkipWhitespace();
+                if (index != json.Length)
+                {
+                    ThrowSyntaxError("JSON contains trailing content.");
                 }
 
-                if (current == '"')
+                if (numberReplacements.Count == 0)
                 {
-                    inString = true;
-                    continue;
+                    return json;
                 }
 
-                if (current == '/' && index + 1 < json.Length &&
-                    (json[index + 1] == '/' || json[index + 1] == '*'))
+                var normalized = new StringBuilder(json.Length);
+                var sourceIndex = 0;
+                foreach (var replacement in numberReplacements)
                 {
-                    throw new JsonSerializationException("Patch JSON comments are not permitted.");
+                    normalized.Append(json, sourceIndex, replacement.Start - sourceIndex);
+                    normalized.Append(replacement.Value);
+                    sourceIndex = replacement.Start + replacement.Length;
                 }
 
-                if (current == ',')
+                normalized.Append(json, sourceIndex, json.Length - sourceIndex);
+                return normalized.ToString();
+            }
+
+            private void ParseValue()
+            {
+                if (index >= json.Length)
                 {
-                    var next = index + 1;
-                    while (next < json.Length && char.IsWhiteSpace(json[next]))
+                    ThrowSyntaxError("JSON value is missing.");
+                }
+
+                switch (json[index])
+                {
+                    case '{':
+                        ParseObject();
+                        return;
+                    case '[':
+                        ParseArray();
+                        return;
+                    case '"':
+                        ParseString();
+                        return;
+                    case 't':
+                        ParseLiteral("true");
+                        return;
+                    case 'f':
+                        ParseLiteral("false");
+                        return;
+                    case 'n':
+                        ParseLiteral("null");
+                        return;
+                    case '-':
+                    case '0':
+                    case '1':
+                    case '2':
+                    case '3':
+                    case '4':
+                    case '5':
+                    case '6':
+                    case '7':
+                    case '8':
+                    case '9':
+                        ParseNumber();
+                        return;
+                    default:
+                        ThrowSyntaxError("Invalid JSON value.");
+                        return;
+                }
+            }
+
+            private void ParseObject()
+            {
+                Expect('{');
+                SkipWhitespace();
+                if (TryConsume('}'))
+                {
+                    return;
+                }
+
+                while (true)
+                {
+                    if (index >= json.Length || json[index] != '"')
                     {
-                        next++;
+                        ThrowSyntaxError("JSON object member names must be double-quoted strings.");
                     }
 
-                    if (next < json.Length && (json[next] == '}' || json[next] == ']'))
+                    ParseString();
+                    SkipWhitespace();
+                    Expect(':');
+                    SkipWhitespace();
+                    ParseValue();
+                    SkipWhitespace();
+                    if (TryConsume('}'))
                     {
-                        throw new JsonSerializationException("Patch JSON trailing commas are not permitted.");
+                        return;
+                    }
+
+                    Expect(',');
+                    SkipWhitespace();
+                }
+            }
+
+            private void ParseArray()
+            {
+                Expect('[');
+                SkipWhitespace();
+                if (TryConsume(']'))
+                {
+                    return;
+                }
+
+                while (true)
+                {
+                    ParseValue();
+                    SkipWhitespace();
+                    if (TryConsume(']'))
+                    {
+                        return;
+                    }
+
+                    Expect(',');
+                    SkipWhitespace();
+                }
+            }
+
+            private void ParseString()
+            {
+                Expect('"');
+                while (index < json.Length)
+                {
+                    var current = json[index++];
+                    if (current == '"')
+                    {
+                        return;
+                    }
+
+                    if (current < '\u0020')
+                    {
+                        ThrowSyntaxError("JSON strings cannot contain unescaped control characters.");
+                    }
+
+                    if (current != '\\')
+                    {
+                        continue;
+                    }
+
+                    if (index >= json.Length)
+                    {
+                        ThrowSyntaxError("JSON string escape is incomplete.");
+                    }
+
+                    var escape = json[index++];
+                    switch (escape)
+                    {
+                        case '"':
+                        case '\\':
+                        case '/':
+                        case 'b':
+                        case 'f':
+                        case 'n':
+                        case 'r':
+                        case 't':
+                            break;
+                        case 'u':
+                            for (var digit = 0; digit < 4; digit++)
+                            {
+                                if (index >= json.Length || !IsHexDigit(json[index]))
+                                {
+                                    ThrowSyntaxError("JSON Unicode escapes require exactly four hexadecimal digits.");
+                                }
+
+                                index++;
+                            }
+
+                            break;
+                        default:
+                            ThrowSyntaxError("Invalid JSON string escape.");
+                            break;
                     }
                 }
+
+                ThrowSyntaxError("JSON string is unterminated.");
+            }
+
+            private void ParseNumber()
+            {
+                var start = index;
+                if (TryConsume('-') && index >= json.Length)
+                {
+                    ThrowSyntaxError("JSON number is incomplete.");
+                }
+
+                if (TryConsume('0'))
+                {
+                    if (index < json.Length && IsDigit(json[index]))
+                    {
+                        ThrowSyntaxError("JSON numbers cannot contain leading zeroes.");
+                    }
+                }
+                else
+                {
+                    if (index >= json.Length || json[index] < '1' || json[index] > '9')
+                    {
+                        ThrowSyntaxError("JSON number requires an integer part.");
+                    }
+
+                    while (index < json.Length && IsDigit(json[index]))
+                    {
+                        index++;
+                    }
+                }
+
+                if (TryConsume('.'))
+                {
+                    RequireDigit("JSON number fractions require at least one digit.");
+                    while (index < json.Length && IsDigit(json[index]))
+                    {
+                        index++;
+                    }
+                }
+
+                if (index < json.Length && (json[index] == 'e' || json[index] == 'E'))
+                {
+                    index++;
+                    if (index < json.Length && (json[index] == '+' || json[index] == '-'))
+                    {
+                        index++;
+                    }
+
+                    RequireDigit("JSON number exponents require at least one digit.");
+                    while (index < json.Length && IsDigit(json[index]))
+                    {
+                        index++;
+                    }
+                }
+
+                var length = index - start;
+                if (TryNormalizeInt32(json, start, length, out var normalized))
+                {
+                    var original = json.Substring(start, length);
+                    if (!string.Equals(original, normalized, StringComparison.Ordinal))
+                    {
+                        numberReplacements.Add(new NumberReplacement(start, length, normalized));
+                    }
+                }
+            }
+
+            private void ParseLiteral(string literal)
+            {
+                foreach (var expected in literal)
+                {
+                    if (index >= json.Length || json[index] != expected)
+                    {
+                        ThrowSyntaxError("Invalid JSON literal.");
+                    }
+
+                    index++;
+                }
+            }
+
+            private void SkipWhitespace()
+            {
+                while (index < json.Length)
+                {
+                    var current = json[index];
+                    if (current != '\u0020' && current != '\t' && current != '\r' && current != '\n')
+                    {
+                        return;
+                    }
+
+                    index++;
+                }
+            }
+
+            private void RequireDigit(string message)
+            {
+                if (index >= json.Length || !IsDigit(json[index]))
+                {
+                    ThrowSyntaxError(message);
+                }
+            }
+
+            private void Expect(char expected)
+            {
+                if (!TryConsume(expected))
+                {
+                    ThrowSyntaxError("Expected '" + expected + "'.");
+                }
+            }
+
+            private bool TryConsume(char expected)
+            {
+                if (index >= json.Length || json[index] != expected)
+                {
+                    return false;
+                }
+
+                index++;
+                return true;
+            }
+
+            private void ThrowSyntaxError(string message)
+            {
+                throw new JsonSerializationException(message + " Position " + index.ToString(CultureInfo.InvariantCulture) + ".");
+            }
+
+            private static bool IsDigit(char value)
+            {
+                return value >= '0' && value <= '9';
+            }
+
+            private static bool IsHexDigit(char value)
+            {
+                return IsDigit(value) ||
+                    (value >= 'a' && value <= 'f') ||
+                    (value >= 'A' && value <= 'F');
+            }
+
+            private static bool TryNormalizeInt32(string value, int start, int length, out string normalized)
+            {
+                var end = start + length;
+                var cursor = start;
+                var negative = value[cursor] == '-';
+                if (negative)
+                {
+                    cursor++;
+                }
+
+                var integerStart = cursor;
+                while (cursor < end && IsDigit(value[cursor]))
+                {
+                    cursor++;
+                }
+
+                var integerLength = cursor - integerStart;
+                var fractionStart = cursor;
+                var fractionLength = 0;
+                if (cursor < end && value[cursor] == '.')
+                {
+                    cursor++;
+                    fractionStart = cursor;
+                    while (cursor < end && IsDigit(value[cursor]))
+                    {
+                        cursor++;
+                    }
+
+                    fractionLength = cursor - fractionStart;
+                }
+
+                long exponent = 0;
+                if (cursor < end && (value[cursor] == 'e' || value[cursor] == 'E'))
+                {
+                    cursor++;
+                    var exponentNegative = false;
+                    if (cursor < end && (value[cursor] == '+' || value[cursor] == '-'))
+                    {
+                        exponentNegative = value[cursor] == '-';
+                        cursor++;
+                    }
+
+                    var exponentLimit = (long)length + 20;
+                    while (cursor < end)
+                    {
+                        var digit = value[cursor++] - '0';
+                        exponent = exponent > exponentLimit
+                            ? exponentLimit
+                            : Math.Min(exponentLimit, (exponent * 10) + digit);
+                    }
+
+                    if (exponentNegative)
+                    {
+                        exponent = -exponent;
+                    }
+                }
+
+                var combinedLength = integerLength + fractionLength;
+                var firstNonZero = -1;
+                for (var digitIndex = 0; digitIndex < combinedLength; digitIndex++)
+                {
+                    if (CombinedDigit(value, integerStart, integerLength, fractionStart, digitIndex) != '0')
+                    {
+                        firstNonZero = digitIndex;
+                        break;
+                    }
+                }
+
+                if (firstNonZero < 0)
+                {
+                    normalized = "0";
+                    return true;
+                }
+
+                var decimalPosition = integerLength + exponent;
+                if (decimalPosition <= 0)
+                {
+                    normalized = string.Empty;
+                    return false;
+                }
+
+                if (decimalPosition < combinedLength)
+                {
+                    for (var digitIndex = (int)decimalPosition; digitIndex < combinedLength; digitIndex++)
+                    {
+                        if (CombinedDigit(value, integerStart, integerLength, fractionStart, digitIndex) != '0')
+                        {
+                            normalized = string.Empty;
+                            return false;
+                        }
+                    }
+                }
+
+                var significantLength = decimalPosition - firstNonZero;
+                if (significantLength > 10)
+                {
+                    normalized = string.Empty;
+                    return false;
+                }
+
+                long magnitude = 0;
+                for (long digitIndex = firstNonZero; digitIndex < decimalPosition; digitIndex++)
+                {
+                    var digit = digitIndex < combinedLength
+                        ? CombinedDigit(value, integerStart, integerLength, fractionStart, (int)digitIndex) - '0'
+                        : 0;
+                    magnitude = (magnitude * 10) + digit;
+                }
+
+                var maximum = negative ? 2147483648L : int.MaxValue;
+                if (magnitude > maximum)
+                {
+                    normalized = string.Empty;
+                    return false;
+                }
+
+                var result = negative ? -magnitude : magnitude;
+                normalized = result.ToString(CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            private static char CombinedDigit(
+                string value,
+                int integerStart,
+                int integerLength,
+                int fractionStart,
+                int digitIndex)
+            {
+                return digitIndex < integerLength
+                    ? value[integerStart + digitIndex]
+                    : value[fractionStart + digitIndex - integerLength];
+            }
+
+            private readonly struct NumberReplacement
+            {
+                public NumberReplacement(int start, int length, string value)
+                {
+                    Start = start;
+                    Length = length;
+                    Value = value;
+                }
+
+                public int Start { get; }
+
+                public int Length { get; }
+
+                public string Value { get; }
             }
         }
 
@@ -247,10 +683,13 @@ namespace VizzyGPT.Core.Patching
             RequireOnlyProperties(selector, "node selector", "id", "path");
             if (selector.TryGetValue("id", StringComparison.Ordinal, out var id))
             {
-                if (id.Type != JTokenType.Integer)
+                if (id.Type != JTokenType.Integer ||
+                    !int.TryParse(id.ToString(Formatting.None), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var normalizedId))
                 {
-                    throw new JsonSerializationException("Node selector id must be an integer.");
+                    throw new JsonSerializationException("Node selector id must be an Int32 integer.");
                 }
+
+                selector["id"] = normalizedId;
             }
 
             if (selector.TryGetValue("path", StringComparison.Ordinal, out _))

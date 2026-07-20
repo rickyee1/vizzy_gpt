@@ -112,3 +112,40 @@ Tests: failed 0, passed 231, skipped 0, total 231.
 ## Strict-JSON Phase A RED Verification
 
 - RED pending controller execution; tests were intentionally not run in this worktree.
+
+## Strict-JSON Review Fix
+
+### Implementation
+
+- Replaced the comment/trailing-comma scanner with a recursive-descent RFC 8259 syntax validator over the raw patch string.
+- The validator enforces JSON whitespace, object/array grammar, double-quoted strings and escapes, number grammar, exact literals, and end-of-input while leaving quoted structural and comment-like text untouched.
+- Exact integral JSON number forms within the `Int32` range are canonicalized before Json.NET conversion; selector validation then requires and normalizes an in-range integer token.
+- Preserved `DateParseHandling.None`, duplicate-member rejection, and `PatchApplyException` wrapping.
+
+### Verification
+
+RED command:
+
+```powershell
+$env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
+
+- Build: PASS, 0 warnings, 0 errors.
+- Tests: failed 11, passed 248, skipped 0, total 259. The failures matched the strict-JSON regression set.
+
+Focused Task 3 command:
+
+```powershell
+dotnet test tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter 'FullyQualifiedName~VizzyGPT.Core.Tests.Patching.VizzyPatchEngineTests'
+```
+
+- Tests: failed 0, passed 242, skipped 0, total 242.
+
+Full GREEN command:
+
+```powershell
+$env:CODEX_SHELL='1'; powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
+```
+
+- Build: PASS, 0 warnings, 0 errors.
+- Tests: failed 0, passed 259, skipped 0, total 259.
