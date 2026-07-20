@@ -13,12 +13,12 @@ namespace VizzyGPT.Core.Patching
         {
             if (id.HasValue == (path != null))
             {
-                throw new ArgumentException("A node selector must define exactly one of id or path.");
+                throw new PatchApplyException("A node selector must define exactly one of id or path.");
             }
 
             if (path != null && !IsCanonicalPath(path))
             {
-                throw new ArgumentException("A node selector path must be an absolute canonical indexed path.", nameof(path));
+                throw new PatchApplyException("A node selector path must be an absolute canonical indexed path.");
             }
 
             Id = id;

@@ -65,6 +65,11 @@ namespace VizzyGPT.Core.Patching
             foreach (var attribute in Attributes)
             {
                 ValidateUnqualifiedName(attribute.Key, "attribute");
+                if (string.Equals(attribute.Key, "xmlns", StringComparison.Ordinal))
+                {
+                    throw new PatchApplyException("Node attribute name 'xmlns' is reserved.");
+                }
+
                 if (attribute.Value == null)
                 {
                     throw new PatchApplyException("Node attribute '" + attribute.Key + "' cannot be null.");

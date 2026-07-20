@@ -57,10 +57,14 @@ namespace VizzyGPT.Core.Patching
 
             try
             {
+                ValidateJsonProtocolSyntax(json);
+
                 JObject root;
                 using (var stringReader = new StringReader(json))
                 using (var jsonReader = new JsonTextReader(stringReader))
                 {
+                    jsonReader.DateParseHandling = DateParseHandling.None;
+
                     root = JObject.Load(
                         jsonReader,
                         new JsonLoadSettings
@@ -97,6 +101,60 @@ namespace VizzyGPT.Core.Patching
             catch (ArgumentException exception)
             {
                 throw new PatchApplyException("Invalid patch contract: " + exception.Message, exception);
+            }
+        }
+
+        private static void ValidateJsonProtocolSyntax(string json)
+        {
+            var inString = false;
+            var escaped = false;
+
+            for (var index = 0; index < json.Length; index++)
+            {
+                var current = json[index];
+                if (inString)
+                {
+                    if (escaped)
+                    {
+                        escaped = false;
+                    }
+                    else if (current == '\\')
+                    {
+                        escaped = true;
+                    }
+                    else if (current == '"')
+                    {
+                        inString = false;
+                    }
+
+                    continue;
+                }
+
+                if (current == '"')
+                {
+                    inString = true;
+                    continue;
+                }
+
+                if (current == '/' && index + 1 < json.Length &&
+                    (json[index + 1] == '/' || json[index + 1] == '*'))
+                {
+                    throw new JsonSerializationException("Patch JSON comments are not permitted.");
+                }
+
+                if (current == ',')
+                {
+                    var next = index + 1;
+                    while (next < json.Length && char.IsWhiteSpace(json[next]))
+                    {
+                        next++;
+                    }
+
+                    if (next < json.Length && (json[next] == '}' || json[next] == ']'))
+                    {
+                        throw new JsonSerializationException("Patch JSON trailing commas are not permitted.");
+                    }
+                }
             }
         }
 

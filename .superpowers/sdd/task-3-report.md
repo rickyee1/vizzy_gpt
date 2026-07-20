@@ -79,3 +79,26 @@ Tests: failed 0, passed 231, skipped 0, total 231.
 - Added coverage for ISO-8601-shaped JSON strings, block and line comments, trailing commas in objects and arrays, and the reserved `xmlns` attribute name.
 - Updated direct invalid `NodeSelector` construction expectations to require `PatchApplyException`.
 - RED pending controller execution: the current parser allows comments and trailing commas, parses ISO-shaped strings as dates, `NodeSpec` permits `xmlns`, and direct `NodeSelector` validation throws `ArgumentException`.
+
+## Phase A Review-Fix Verification
+
+### Reproduced RED
+
+- Ran `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1` with `CODEX_SHELL=1`.
+- Release build: 0 warnings, 0 errors.
+- Tests: failed 7, passed 230, skipped 0, total 237.
+- Failures were exactly ISO-8601-shaped string coercion, block comment, line comment, trailing object comma, trailing array comma, `NodeSelector` constructor exception type, and `xmlns` attribute acceptance.
+
+### Fixes
+
+- Set `JsonTextReader.DateParseHandling` to `None` before `JObject.Load`.
+- Added a string- and escape-aware lexical precheck before loading JSON. It rejects `//` and `/*` only outside strings and rejects commas followed only by whitespace and `}` or `]`.
+- Rejects the exact ordinal attribute name `xmlns` in `NodeSpec`.
+- Converts both `NodeSelector` constructor contract failures to `PatchApplyException`.
+
+### GREEN Verification
+
+- Re-ran `powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1` with `CODEX_SHELL=1`.
+- Release build: 0 warnings, 0 errors.
+- Tests: failed 0, passed 237, skipped 0, total 237.
+- Scanner self-review: escaped quotes and backslashes retain string state; comment-like and comma-like string content is ignored by the precheck; all other JSON syntax remains delegated to Newtonsoft.
