@@ -217,6 +217,80 @@ namespace VizzyGPT.Core.Tests.Storage
             await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
         }
 
+        [Test]
+        public async Task Load_rejects_persisted_empty_preview_lines()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var pending = CreatePending("program-empty-preview", "patched");
+            await store.SavePendingAsync(pending);
+            MutatePendingJson(
+                temporary.Path,
+                json => json["previewLines"] = new JArray());
+
+            await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
+        }
+
+        [Test]
+        public async Task Load_rejects_an_altered_deterministic_patch_change_preview_line()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var pending = CreatePending("program-altered-preview", "patched");
+            Assert.That(pending.PreviewLines, Is.Not.Empty);
+            await store.SavePendingAsync(pending);
+            MutatePendingJson(
+                temporary.Path,
+                json => ((JArray)json["previewLines"]!)[0] = "Altered deterministic change line");
+
+            await AssertLoadRejectedAsync(store, pending.ProgramFingerprint);
+        }
+
+        [Test]
+        public async Task Load_accepts_exact_patch_change_prefix_followed_by_ChangeSession_warning_lines()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var document = VizzyProgramDocument.Parse(
+                "<Program><Variables /><Instructions><Log id='1' text='before' /></Instructions><Expressions /></Program>");
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Apply warning preview",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.UpdateAttribute,
+                        target: new NodeSelector(1, null),
+                        attribute: "text",
+                        value: "after")
+                });
+            var applied = VizzyPatchEngine.Apply(document, patch);
+            var warning = new ValidationIssue(
+                ValidationSeverity.Warning,
+                "RuntimeWarning",
+                "Serializer retained a warning.");
+            var session = ChangeSession.Create(
+                document,
+                patch,
+                applied,
+                new ValidationReport(new[] { warning }));
+            var pending = PendingChange.Create(
+                "program-warning-preview",
+                session,
+                new DateTime(2026, 7, 21, 2, 0, 0, DateTimeKind.Utc));
+
+            await store.SavePendingAsync(pending);
+            var loaded = await store.LoadPendingAsync(pending.ProgramFingerprint);
+
+            Assert.That(loaded, Is.Not.Null);
+            Assert.That(
+                loaded!.PreviewLines.Take(applied.Changes.Count),
+                Is.EqualTo(applied.Changes));
+            Assert.That(
+                loaded.PreviewLines.Skip(applied.Changes.Count),
+                Is.EqualTo(new[] { warning.Message }));
+        }
+
         private static PendingChange CreatePending(string fingerprint, string revision)
         {
             var document = VizzyProgramDocument.Parse(

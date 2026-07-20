@@ -166,6 +166,16 @@ This test-only follow-up adds 24 deterministic cases. They are intentionally not
 
 - Windows reserved device names such as `CON`, `PRN`, and `NUL` are not covered by this Task 4 regression pass. Revisit filename hardening during final branch review.
 - Runtime serializer callback exception semantics are not specified by this Task 4 regression pass. Decide whether exceptions propagate or become validation issues during final branch review.
+- `PendingChange.Create` analyzes dependencies before construction and the integrity-validating constructor analyzes them again. Removing this duplicate analysis is a performance-only optimization deferred to final branch review.
+
+## Remaining Important Regression Matrix
+
+This second test-only follow-up adds 6 deterministic cases. They are intentionally not executed here because the controller owns the RED capture.
+
+| File | Added cases | Public behavior |
+| --- | ---: | --- |
+| `Changes/PendingChangeRebaserTests.cs` | 3 | A local `variableName` update succeeds with or without a same-named global and records no global declaration fingerprint; a `replaceNode`-created `CustomNode` may reference its own patch-owned declaration while persisting the applied result. |
+| `Storage/FileDataStoreTests.cs` | 3 | Reject empty or altered deterministic preview prefixes; preserve a valid `applied.Changes` prefix followed by legitimate `ChangeSession` warning lines across save/load. |
 
 ## Concerns
 
@@ -208,5 +218,5 @@ This test-only follow-up adds 24 deterministic cases. They are intentionally not
 ## Independent Review Fix Concerns
 
 - The previously documented direct Debug testhost restriction remains environmental; the repository wrapper and wrapper-prepared focused run are green.
-- The deferred Windows reserved-device-name and runtime-callback-exception findings remain outside this review fix scope.
-- No new production concerns were found in the operation-by-operation self-review.
+- The deferred Windows reserved-device-name, runtime-callback-exception, and duplicate-analysis performance findings remain outside this review fix scope.
+- The remaining Important findings are represented by unexecuted test contracts; this follow-up contains no production edits.

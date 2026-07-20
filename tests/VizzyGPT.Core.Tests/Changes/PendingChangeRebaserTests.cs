@@ -139,6 +139,86 @@ namespace VizzyGPT.Core.Tests.Changes
             AssertConflict(pending, current);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Update_local_variableName_does_not_require_or_fingerprint_a_global_declaration(
+            bool includeSameNamedGlobal)
+        {
+            var global = includeSameNamedGlobal
+                ? "<Variable name='localYaw' number='9' />"
+                : string.Empty;
+            var document = VizzyProgramDocument.Parse(
+                "<Program><Variables>" + global + "</Variables>" +
+                "<Instructions><SetVariable id='1'><Variable id='2' local='true' />" +
+                "<Constant number='0' /></SetVariable></Instructions><Expressions /></Program>");
+            var operation = new PatchOperation(
+                PatchOperationType.UpdateAttribute,
+                target: new NodeSelector(2, null),
+                attribute: "variableName",
+                value: "localYaw");
+
+            var pending = CreatePending(document, operation);
+
+            Assert.That(pending.DeclarationFingerprints, Is.Empty);
+            Assert.That(
+                VizzyProgramDocument.Parse(pending.ResultXml).FindById(2)!.Attribute("variableName")!.Value,
+                Is.EqualTo("localYaw"));
+        }
+
+        [Test]
+        public void PendingChange_accepts_a_self_referencing_CustomNode_declaration_created_by_replaceNode()
+        {
+            var document = VizzyProgramDocument.Parse(
+                "<Program><Variables /><Instructions /><Expressions>" +
+                "<CustomNode id='1' name='old'><Constant number='1' /></CustomNode>" +
+                "</Expressions></Program>");
+            var replacement = new NodeSpec(
+                "CustomNode",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["id"] = "2",
+                    ["name"] = "new"
+                },
+                new[]
+                {
+                    new NodeSpec(
+                        "CallCustomNode",
+                        new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            ["customNodeName"] = "new"
+                        },
+                        Array.Empty<NodeSpec>())
+                });
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Replace custom node declaration",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.ReplaceNode,
+                        target: new NodeSelector(1, null),
+                        node: replacement)
+                });
+
+            var applied = VizzyPatchEngine.Apply(document, patch);
+            Assert.That(applied.Document.FindById(2), Is.Not.Null);
+            Assert.That(
+                applied.Document.FindById(2)!.Descendants("CallCustomNode").Single().Attribute("customNodeName")!.Value,
+                Is.EqualTo("new"));
+            var session = ChangeSession.Create(document, patch, applied, ValidReport());
+
+            var pending = PendingChange.Create(
+                "program-replaced-custom-node",
+                session,
+                new DateTime(2026, 7, 21, 6, 0, 0, DateTimeKind.Utc));
+
+            Assert.That(pending.TargetFingerprints, Has.Count.EqualTo(1));
+            Assert.That(pending.TargetFingerprints[0].Selector.Id, Is.EqualTo(1));
+            Assert.That(pending.DeclarationFingerprints, Is.Empty);
+            Assert.That(pending.ResultXml, Is.EqualTo(applied.Document.ToXml()));
+            Assert.That(VizzyProgramDocument.Parse(pending.ResultXml).FindById(2), Is.Not.Null);
+        }
+
         [Test]
         public void PendingChange_accepts_update_of_an_id_introduced_by_an_earlier_operation()
         {
