@@ -104,8 +104,15 @@ namespace VizzyGPT.Core.Storage
 
             var json = await File.ReadAllTextAsync(path, Utf8WithoutBom, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            return JsonConvert.DeserializeObject<PendingChange>(json, JsonSettings)
+            var pending = JsonConvert.DeserializeObject<PendingChange>(json, JsonSettings)
                 ?? throw new JsonSerializationException("Pending change JSON deserialized to null.");
+            if (!string.Equals(pending.ProgramFingerprint, programFingerprint, StringComparison.Ordinal))
+            {
+                throw new JsonSerializationException(
+                    "Pending change programFingerprint does not match the requested fingerprint.");
+            }
+
+            return pending;
         }
 
         public Task DeletePendingAsync(

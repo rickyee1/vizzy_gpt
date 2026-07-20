@@ -16,20 +16,6 @@ namespace VizzyGPT.Core.Validation
             "Expressions"
         };
 
-        private static readonly HashSet<string> ExpressionElements = new HashSet<string>(
-            new[]
-            {
-                "ActivationGroup",
-                "BinaryOp",
-                "Constant",
-                "CraftProperty",
-                "CustomNode",
-                "UnaryOp",
-                "Variable",
-                "VectorOp"
-            },
-            StringComparer.Ordinal);
-
         private readonly Func<string, ValidationIssue?> runtimeSerializerValidator;
 
         public VizzyProgramValidator(Func<string, ValidationIssue?> runtimeSerializerValidator)
@@ -51,7 +37,7 @@ namespace VizzyGPT.Core.Validation
             }
 
             var issues = new List<ValidationIssue>();
-            AddPureXmlIssues(document, issues);
+            AddPureXmlIssues(document, catalog, issues);
             AddCatalogIssues(document, catalog, issues);
 
             var runtimeIssue = runtimeSerializerValidator(document.ToXml());
@@ -63,7 +49,10 @@ namespace VizzyGPT.Core.Validation
             return new ValidationReport(issues);
         }
 
-        private static void AddPureXmlIssues(VizzyProgramDocument document, ICollection<ValidationIssue> issues)
+        private static void AddPureXmlIssues(
+            VizzyProgramDocument document,
+            VizzyNodeCatalog catalog,
+            ICollection<ValidationIssue> issues)
         {
             foreach (var requiredContainer in RequiredContainers)
             {
@@ -79,21 +68,35 @@ namespace VizzyGPT.Core.Validation
                 }
             }
 
-            AddDuplicateIdIssues(document, issues);
+            AddIdIssues(document, issues);
             AddUnresolvedVariableIssues(document, issues);
             AddMalformedConstantIssues(document, issues);
-            AddPlacementIssues(document, issues);
+            AddPlacementIssues(document, catalog, issues);
         }
 
-        private static void AddDuplicateIdIssues(VizzyProgramDocument document, ICollection<ValidationIssue> issues)
+        private static void AddIdIssues(VizzyProgramDocument document, ICollection<ValidationIssue> issues)
         {
             var ids = new HashSet<int>();
             foreach (var element in document.Root.DescendantsAndSelf())
             {
                 var attribute = element.Attribute("id");
-                if (attribute == null ||
-                    !int.TryParse(attribute.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
+                if (attribute == null)
                 {
+                    continue;
+                }
+
+                if (!int.TryParse(
+                        attribute.Value,
+                        NumberStyles.AllowLeadingSign,
+                        CultureInfo.InvariantCulture,
+                        out var id) ||
+                    !string.Equals(id.ToString(CultureInfo.InvariantCulture), attribute.Value, StringComparison.Ordinal))
+                {
+                    issues.Add(
+                        Error(
+                            "InvalidId",
+                            "Id '" + attribute.Value + "' must be an exact Int32 integer.",
+                            PathFor(element)));
                     continue;
                 }
 
@@ -172,33 +175,72 @@ namespace VizzyGPT.Core.Validation
             }
         }
 
-        private static void AddPlacementIssues(VizzyProgramDocument document, ICollection<ValidationIssue> issues)
+        private static void AddPlacementIssues(
+            VizzyProgramDocument document,
+            VizzyNodeCatalog catalog,
+            ICollection<ValidationIssue> issues)
         {
+            var reported = new HashSet<XElement>();
+
+            foreach (var container in document.Root.DescendantsAndSelf()
+                .Where(element => RequiredContainers.Contains(element.Name.LocalName, StringComparer.Ordinal)))
+            {
+                var parent = container.Parent;
+                var validParent = HasUnqualifiedName(container, "Instructions")
+                    ? ReferenceEquals(parent, document.Root) ||
+                      (parent != null && catalog.ContainsInstructionElement(parent.Name.LocalName))
+                    : ReferenceEquals(parent, document.Root);
+                if (!validParent)
+                {
+                    AddPlacementIssue(container, reported, issues);
+                }
+            }
+
             foreach (var instructions in document.Root.DescendantsAndSelf().Where(element => HasUnqualifiedName(element, "Instructions")))
             {
                 foreach (var child in instructions.Elements())
                 {
-                    if (ExpressionElements.Contains(child.Name.LocalName))
+                    if (catalog.ContainsExpressionElement(child.Name.LocalName) &&
+                        !catalog.ContainsInstructionElement(child.Name.LocalName))
                     {
-                        issues.Add(
-                            Error(
-                                "InvalidChildPlacement",
-                                child.Name.LocalName + " cannot be a direct child of Instructions.",
-                                PathFor(child)));
+                        AddPlacementIssue(child, reported, issues);
                     }
                 }
             }
 
-            foreach (var variables in document.Root.Elements().Where(element => HasUnqualifiedName(element, "Variables")))
+            foreach (var expressions in document.Root.Elements().Where(element => HasUnqualifiedName(element, "Expressions")))
+            {
+                foreach (var child in expressions.Elements())
+                {
+                    if (catalog.ContainsInstructionElement(child.Name.LocalName) &&
+                        !catalog.ContainsExpressionElement(child.Name.LocalName))
+                    {
+                        AddPlacementIssue(child, reported, issues);
+                    }
+                }
+            }
+
+            foreach (var variables in document.Root.DescendantsAndSelf().Where(element => HasUnqualifiedName(element, "Variables")))
             {
                 foreach (var child in variables.Elements().Where(element => !HasUnqualifiedName(element, "Variable")))
                 {
-                    issues.Add(
-                        Error(
-                            "InvalidChildPlacement",
-                            child.Name.LocalName + " cannot be a direct child of Variables.",
-                            PathFor(child)));
+                    AddPlacementIssue(child, reported, issues);
                 }
+            }
+        }
+
+        private static void AddPlacementIssue(
+            XElement element,
+            ISet<XElement> reported,
+            ICollection<ValidationIssue> issues)
+        {
+            if (reported.Add(element))
+            {
+                issues.Add(
+                    Error(
+                        "InvalidChildPlacement",
+                        element.Name.LocalName + " is not supported in its direct parent position.",
+                        PathFor(element)));
             }
         }
 

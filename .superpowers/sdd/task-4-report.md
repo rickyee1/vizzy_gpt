@@ -171,3 +171,42 @@ This test-only follow-up adds 24 deterministic cases. They are intentionally not
 
 - A direct Debug `dotnet test` invocation builds successfully but the Codex Windows environment denies the testhost parent-process query. The repository wrapper applies its existing `MSTest.EnableParentProcessQuery=false` workaround; all focused and full tests pass with the wrapper-prepared Release testhost.
 - Independent review Important findings are now represented by unexecuted RED contracts; production changes remain outside this commit.
+
+## Independent Review Fix Implementation
+
+- Replaced base-only dependency discovery with an ordered patch analyzer. It applies operations to an annotated clone, preserves immutable base-origin snapshots across in-place edits and moves, and excludes nodes/declarations created or replaced by earlier operations from stale-base fingerprints.
+- Added named base declaration dependencies for `renameVariable` and `removeVariable`, plus the declaration assigned by `updateAttribute` when `attribute` is `variableName`. Existing selected-subtree and `NodeSpec` reference discovery remains active and resolves against sequential patch state.
+- Hardened the `PendingChange` constructor so persisted base, patch, result, and fingerprints form one derived record. It reapplies the patch, compares canonical result XML/hash, recomputes deterministic target/declaration fingerprints, and rejects missing, extra, duplicated, reordered, or altered records.
+- Bound `FileDataStore.LoadPendingAsync` to the requested program fingerprint after deserialization.
+- Extended `VizzyNodeCatalog` with immutable ordinal instruction/expression category sets sourced from the toolbox sections. Validation now rejects noncanonical/non-`Int32` IDs, classifies direct instruction/expression placement from catalog metadata, and enforces structural-container parent rules while allowing nested `Instructions` under catalog instructions.
+
+## Patch Operation Audit
+
+| Operation | Dependency/provenance behavior |
+| --- | --- |
+| `addVariable` | Creates a patch-owned declaration with no stale-base fingerprint; later references resolve against sequential state. |
+| `renameVariable` | Fingerprints the named declaration only when it has base provenance; preserves provenance through rename and reference updates. |
+| `removeVariable` | Fingerprints the named declaration only when it has base provenance before removal. |
+| `insertBefore` | Fingerprints a base-derived target and its referenced declarations; analyzes inserted `NodeSpec` references against current sequential declarations. |
+| `insertAfter` | Same as `insertBefore`; later selectors can target the patch-created node without a base fingerprint. |
+| `insertChild` | Fingerprints a base-derived destination target and analyzes inserted `NodeSpec` references. |
+| `replaceNode` | Fingerprints the replaced base subtree and its references; replacement nodes are patch-owned while preserving patch-engine `pos` behavior. |
+| `removeNode` | Fingerprints the removed base subtree and declarations referenced by it. |
+| `moveNode` | Fingerprints base-derived target and destination once each, preserves target provenance during the move, and analyzes both subtrees' references. |
+| `updateAttribute` | Fingerprints a base-derived target and existing subtree references; `variableName` updates additionally resolve/fingerprint the new base declaration, while patch-created declarations remain patch-owned. |
+
+## Independent Review Verification
+
+| Command | Result |
+| --- | --- |
+| `powershell -ExecutionPolicy Bypass -File tools\\Test-Core.ps1` before fixes | RED reproduced: build 0 warnings/0 errors; 21 failed, 322 passed, 0 skipped, 343 total. |
+| `dotnet build src/VizzyGPT.Core/VizzyGPT.Core.csproj --no-restore` | Exit 0; 0 warnings, 0 errors after pending and validation changes. |
+| `powershell -ExecutionPolicy Bypass -File tools\\Test-Core.ps1` | Exit 0; build 0 warnings/0 errors; 343 passed, 0 failed, 0 skipped. |
+| `dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~VizzyProgramValidatorTests|FullyQualifiedName~PendingChangeRebaserTests|FullyQualifiedName~FileDataStoreTests"` | Exit 0; 54 passed, 0 failed, 0 skipped. |
+| `git diff --check` | Exit 0; no whitespace errors. |
+
+## Independent Review Fix Concerns
+
+- The previously documented direct Debug testhost restriction remains environmental; the repository wrapper and wrapper-prepared focused run are green.
+- The deferred Windows reserved-device-name and runtime-callback-exception findings remain outside this review fix scope.
+- No new production concerns were found in the operation-by-operation self-review.

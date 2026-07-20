@@ -9,11 +9,19 @@ namespace VizzyGPT.Core.Programs
     {
         private readonly ImmutableOrdinalStringSet styles;
         private readonly ImmutableOrdinalStringSet elements;
+        private readonly ImmutableOrdinalStringSet instructionElements;
+        private readonly ImmutableOrdinalStringSet expressionElements;
 
-        private VizzyNodeCatalog(ImmutableOrdinalStringSet styles, ImmutableOrdinalStringSet elements)
+        private VizzyNodeCatalog(
+            ImmutableOrdinalStringSet styles,
+            ImmutableOrdinalStringSet elements,
+            ImmutableOrdinalStringSet instructionElements,
+            ImmutableOrdinalStringSet expressionElements)
         {
             this.styles = styles;
             this.elements = elements;
+            this.instructionElements = instructionElements;
+            this.expressionElements = expressionElements;
         }
 
         public static VizzyNodeCatalog FromToolboxXml(string xml)
@@ -30,8 +38,14 @@ namespace VizzyGPT.Core.Programs
                 .Cast<string>();
             var elements = root.DescendantsAndSelf()
                 .Select(element => element.Name.LocalName);
+            var instructionElements = CategoryElements(root, "Instructions");
+            var expressionElements = CategoryElements(root, "Expressions");
 
-            return new VizzyNodeCatalog(new ImmutableOrdinalStringSet(styles), new ImmutableOrdinalStringSet(elements));
+            return new VizzyNodeCatalog(
+                new ImmutableOrdinalStringSet(styles),
+                new ImmutableOrdinalStringSet(elements),
+                new ImmutableOrdinalStringSet(instructionElements),
+                new ImmutableOrdinalStringSet(expressionElements));
         }
 
         public bool ContainsStyle(string? style)
@@ -42,6 +56,26 @@ namespace VizzyGPT.Core.Programs
         public bool ContainsElement(string? element)
         {
             return element != null && elements.Contains(element);
+        }
+
+        public bool ContainsInstructionElement(string? element)
+        {
+            return element != null && instructionElements.Contains(element);
+        }
+
+        public bool ContainsExpressionElement(string? element)
+        {
+            return element != null && expressionElements.Contains(element);
+        }
+
+        private static IEnumerable<string> CategoryElements(XElement root, string categoryName)
+        {
+            return root.Elements()
+                .Where(element =>
+                    element.Name.NamespaceName.Length == 0 &&
+                    string.Equals(element.Name.LocalName, categoryName, StringComparison.Ordinal))
+                .SelectMany(category => category.Elements())
+                .Select(element => element.Name.LocalName);
         }
 
         private sealed class ImmutableOrdinalStringSet
