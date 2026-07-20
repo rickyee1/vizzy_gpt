@@ -57,11 +57,38 @@ namespace VizzyGPT.Core.Tests.Patching
             Assert.That(roundTripped.Operations[0].Type, Is.EqualTo(expectedType));
         }
 
+        [Test]
+        public void Deserialize_preserves_iso_8601_shaped_json_strings()
+        {
+            var timestamp = "2026-07-21T12:34:56.789Z";
+            var json = "{\"baseHash\":\"hash\",\"summary\":\"" + timestamp + "\",\"operations\":[{\"type\":\"updateAttribute\",\"target\":{\"id\":0},\"attribute\":\"text\",\"value\":\"" + timestamp + "\"},{\"type\":\"insertChild\",\"target\":{\"path\":\"/Program[0]/Instructions[0]\"},\"node\":{\"element\":\"Log\",\"attributes\":{\"text\":\"" + timestamp + "\"},\"children\":[]}}]}";
+
+            var document = PatchDocument.Deserialize(json);
+
+            Assert.That(document.Summary, Is.EqualTo(timestamp));
+            Assert.That(document.Operations[0].Value, Is.EqualTo(timestamp));
+            Assert.That(document.Operations[1].Node!.Attributes["text"], Is.EqualTo(timestamp));
+        }
+
         [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}],\"unexpected\":true}")]
         [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0},\"unexpected\":true}]}")]
         [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0,\"unexpected\":true}}]}")]
         [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"insertChild\",\"target\":{\"path\":\"/Program[0]/Instructions[0]\"},\"node\":{\"element\":\"Log\",\"attributes\":{},\"children\":[],\"unexpected\":true}}]}")]
         public void Deserialize_rejects_unknown_json_members(string json)
+        {
+            AssertDeserializeRejected(json);
+        }
+
+        [TestCase("{/* comment */\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        [TestCase("{\"baseHash\":\"hash\",// comment\n\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}]}")]
+        public void Deserialize_rejects_json_comments(string json)
+        {
+            AssertDeserializeRejected(json);
+        }
+
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}}],}")]
+        [TestCase("{\"baseHash\":\"hash\",\"summary\":\"Summary\",\"operations\":[{\"type\":\"removeNode\",\"target\":{\"id\":0}},]}")]
+        public void Deserialize_rejects_trailing_commas(string json)
         {
             AssertDeserializeRejected(json);
         }
@@ -159,10 +186,10 @@ namespace VizzyGPT.Core.Tests.Patching
         [Test]
         public void Node_selector_requires_exactly_one_id_or_path_at_construction()
         {
-            Assert.That(() => new NodeSelector(null, null), Throws.TypeOf<ArgumentException>());
-            Assert.That(() => new NodeSelector(1, "/Program[0]"), Throws.TypeOf<ArgumentException>());
-            Assert.That(() => new NodeSelector(null, string.Empty), Throws.TypeOf<ArgumentException>());
-            Assert.That(() => new NodeSelector(null, "Program[0]"), Throws.TypeOf<ArgumentException>());
+            Assert.That(() => new NodeSelector(null, null), Throws.TypeOf<PatchApplyException>());
+            Assert.That(() => new NodeSelector(1, "/Program[0]"), Throws.TypeOf<PatchApplyException>());
+            Assert.That(() => new NodeSelector(null, string.Empty), Throws.TypeOf<PatchApplyException>());
+            Assert.That(() => new NodeSelector(null, "Program[0]"), Throws.TypeOf<PatchApplyException>());
         }
 
         [TestCase("{\"attributes\":{},\"children\":[]}")]
@@ -193,6 +220,7 @@ namespace VizzyGPT.Core.Tests.Patching
         [TestCase("bad name")]
         [TestCase("vizzy:text")]
         [TestCase("{urn:vizzy}text")]
+        [TestCase("xmlns")]
         public void Node_spec_rejects_invalid_or_namespace_qualified_attribute_names(string attribute)
         {
             AssertNodeSpecRejected(() => new NodeSpec("Constant", Attributes(attribute, "1"), Array.Empty<NodeSpec>()));

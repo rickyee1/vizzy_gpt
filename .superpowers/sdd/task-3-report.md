@@ -72,3 +72,10 @@ powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
 Build succeeded: 0 warnings, 0 errors.
 Tests: failed 0, passed 231, skipped 0, total 231.
 ```
+
+## Phase A Review-Fix
+
+- 87 NUnit cases total after adding six strict-protocol regression cases.
+- Added coverage for ISO-8601-shaped JSON strings, block and line comments, trailing commas in objects and arrays, and the reserved `xmlns` attribute name.
+- Updated direct invalid `NodeSelector` construction expectations to require `PatchApplyException`.
+- RED pending controller execution: the current parser allows comments and trailing commas, parses ISO-shaped strings as dates, `NodeSpec` permits `xmlns`, and direct `NodeSelector` validation throws `ArgumentException`.
