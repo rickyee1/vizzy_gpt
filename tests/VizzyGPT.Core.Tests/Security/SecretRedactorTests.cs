@@ -44,6 +44,28 @@ namespace VizzyGPT.Core.Tests.Security
         }
 
         [Test]
+        public void Redact_replaces_api_key_inside_an_escaped_json_string()
+        {
+            const string input = "{\"detail\":\"{\\\"api_key\\\":\\\"nested-secret\\\"}\"}";
+
+            var result = SecretRedactor.Redact(input, configuredApiKey: null);
+
+            Assert.That(result, Does.Contain("[REDACTED]"));
+            Assert.That(result, Does.Not.Contain("nested-secret"));
+        }
+
+        [Test]
+        public void Redact_replaces_html_or_xml_quoted_api_key_value()
+        {
+            const string input = "<entry>&quot;api_key&quot;: &quot;entity-secret&quot;</entry>";
+
+            var result = SecretRedactor.Redact(input, configuredApiKey: null);
+
+            Assert.That(result, Does.Contain("[REDACTED]"));
+            Assert.That(result, Does.Not.Contain("entity-secret"));
+        }
+
+        [Test]
         public void Redact_handles_multiple_secret_forms_and_occurrences()
         {
             var input = Key + "\nAuthorization: Bearer bearer-one\n" +

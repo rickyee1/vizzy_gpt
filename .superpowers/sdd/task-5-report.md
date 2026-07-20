@@ -250,3 +250,34 @@ The test helper predicate now classifies a candidate as an object schema only wh
 | `dotnet test tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~OpenAiClientTests\|FullyQualifiedName~ContextBuilderTests\|FullyQualifiedName~SecretRedactorTests"` | 59 passed, 0 failed, 0 skipped. |
 
 The initial direct focused invocation built successfully but the Windows testhost parent-process query was denied before case execution. Running the repository wrapper applied its existing workaround; the subsequent focused no-build command then completed normally.
+
+## Task 5 Review Regression Phase A
+
+This follow-up is test-only. Production files remain untouched, and tests are intentionally not run because the controller owns RED capture.
+
+### Official Structured Outputs Constraint
+
+The contract is corrected to match the official Structured Outputs subset documented at https://developers.openai.com/api/docs/guides/structured-outputs:
+
+- Nested unions use `anyOf`; `oneOf` is absent from the emitted schema.
+- Every object sets `additionalProperties: false`, exposes `properties`, and lists every property in `required`.
+- Optional domain fields are required on the wire and represented as nullable `anyOf` members. `addVariable.value` is the current optional field and normalizes JSON `null` to an omitted/null `PatchOperation.Value`.
+- Node attributes use a wire array of strict `{ name, value }` objects so duplicate names can be detected before normalization to the ordinal `NodeSpec.Attributes` dictionary.
+
+### Review Matrix
+
+| Area | New NUnit cases | Regression contract |
+| --- | ---: | --- |
+| Schema and wire/domain normalization | 3 | Both existing endpoint schema assertions now reject every `oneOf`, require operation/selector `anyOf`, validate all strict object/union members and exact fields for ten operations, require nullable `addVariable.value`, and require recursive NodeSpec attribute arrays. New cases cover null normalization, attributed recursive nodes that apply, and duplicate attribute rejection through one repair. |
+| Protocol versus repair | 9 | Malformed Responses JSON, missing output, wrong item role/type, malformed Chat wrappers, official refusals, extracted invalid text for both endpoints, and Auto fallback followed by malformed Chat. Protocol failures/refusals do not consume repair; extracted invalid model text consumes exactly one. |
+| Fallback classification | 5 | Terse structured unsupported codes, phrase collision, clearly unavailable textual Responses endpoint, and unrelated textual not-found wording. |
+| Transport and URI safety | 5 | Arbitrary transport exception redaction/replacement plus rejection of `127.1`, octal, hexadecimal, and single-integer IPv4 spellings. Existing exact HTTP loopback acceptance remains in place. |
+| Context safety and retention | 5 | Canonical-size mode decision, section-preserving huge declarations, HTML/XML entity redaction, newest-log retention under truncation, and deterministic finite-only telemetry summaries. |
+| Secret redaction | 2 | Escaped nested JSON and HTML/XML `&quot;api_key&quot;` values. |
+| **Total added** | **29** | Total Task 5 coverage becomes 88 cases: 58 client/transport/URI, 15 context, and 15 redaction. |
+
+### Phase A Static Checks
+
+- Queue-backed transport remains deterministic and has no network path.
+- No production, project, fixture, or unrelated test file is modified.
+- Controller RED execution is pending by instruction; only diff and ownership checks are performed here.
