@@ -12,6 +12,9 @@ namespace VizzyGPT.Tests.EditMode
 {
     public sealed class XmlUiComponentContractTests
     {
+        private const string StockToggleButtonSchemaError =
+            "The element 'http://www.w3schools.com:ToggleButton' cannot contain child element " +
+            "'http://www.w3schools.com:TextMeshPro' because the parent element's content model is text only.";
         private static readonly string[] PanelIds =
         {
             "gpt-launcher-button", "vizzy-gpt-panel", "settings-button", "close-button",
@@ -113,6 +116,17 @@ namespace VizzyGPT.Tests.EditMode
                 Assert.That(toggle.SelectSingleNode("ui:TextMeshPro", namespaceManager), Is.Not.Null,
                     "ToggleButton must use a TextMeshPro child.");
             }
+
+            AssertToggle(document, namespaceManager, "ask-toggle", "Ask", "OnAskModeClicked();");
+            AssertToggle(document, namespaceManager, "modify-toggle", "Modify", "OnModifyModeClicked();");
+        }
+
+        [Test]
+        public void Task_dialog_surfaces_do_not_use_padding_panels_as_layout_containers()
+        {
+            AssertSurfaceHasStableGeometry("VizzyGptPanel.xml", "vizzy-gpt-panel", "transcript-scroll", "prompt-input");
+            AssertSurfaceHasStableGeometry("PreviewDialog.xml", "preview-dialog-content", "preview-scroll", "apply-button");
+            AssertSurfaceHasStableGeometry("SettingsDialog.xml", "settings-dialog-content", "settings-form", "save-button");
         }
 
         private static IEnumerable<TestCaseData> Resources()
@@ -141,11 +155,42 @@ namespace VizzyGPT.Tests.EditMode
 
             if (allowStockToggleButtonText)
             {
-                errors.RemoveAll(error => error.Contains("ToggleButton") && error.Contains("TextMeshPro"));
+                var knownErrors = errors.FindAll(error => string.Equals(error, StockToggleButtonSchemaError, StringComparison.Ordinal));
+                Assert.That(knownErrors, Has.Count.EqualTo(2), "Expected only the two known stock ToggleButton schema false positives.");
+                errors.RemoveAll(error => string.Equals(error, StockToggleButtonSchemaError, StringComparison.Ordinal));
             }
 
             Assert.That(errors, Is.Empty, string.Join("\n", errors));
             return document;
+        }
+
+        private static void AssertSurfaceHasStableGeometry(string resourceName, string surfaceId, string contentId, string actionId)
+        {
+            var resourcePath = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "Resources", "Ui", resourceName);
+            var document = new XmlDocument();
+            document.Load(resourcePath);
+            var surface = document.SelectSingleNode("//*[@id='" + surfaceId + "']") as XmlElement;
+            var content = document.SelectSingleNode("//*[@id='" + contentId + "']") as XmlElement;
+            var action = document.SelectSingleNode("//*[@id='" + actionId + "']") as XmlElement;
+
+            Assert.That(surface, Is.Not.Null, surfaceId);
+            Assert.That(surface!.HasAttribute("padding"), Is.False, surfaceId + " must not become a horizontal padding layout group.");
+            Assert.That(content, Is.Not.Null, contentId);
+            Assert.That(content!.GetAttribute("anchorMin"), Is.EqualTo("0 0"));
+            Assert.That(content.GetAttribute("anchorMax"), Is.EqualTo("1 1"));
+            Assert.That(action, Is.Not.Null, actionId);
+            Assert.That(action!.HasAttribute("width") || action.HasAttribute("offsetXY"), Is.True, actionId);
+        }
+
+        private static void AssertToggle(XmlDocument document, XmlNamespaceManager namespaceManager, string id, string text, string onValueChanged)
+        {
+            var toggle = document.SelectSingleNode("//*[@id='" + id + "']", namespaceManager) as XmlElement;
+            Assert.That(toggle, Is.Not.Null, id);
+            Assert.That(toggle!.GetAttribute("onValueChanged"), Is.EqualTo(onValueChanged));
+            var labels = toggle.SelectNodes("ui:TextMeshPro", namespaceManager);
+            Assert.That(labels, Is.Not.Null);
+            Assert.That(labels!.Count, Is.EqualTo(1), id + " must have exactly one label.");
+            Assert.That(((XmlElement)labels[0]!).GetAttribute("text"), Is.EqualTo(text));
         }
     }
 }

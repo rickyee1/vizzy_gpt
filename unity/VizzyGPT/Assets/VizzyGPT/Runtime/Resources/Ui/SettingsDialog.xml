@@ -2,9 +2,9 @@
 <XmlLayout xmlns="http://www.w3schools.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\..\..\..\ModTools\UI\XmlLayout.xsd">
   <Include path="Ui/Xml/Styles.xml" />
   <Panel id="settings-dialog" class="dialog-background">
-    <Panel class="panel border" width="600" height="520" padding="20">
-      <TextMeshPro text="Vizzy GPT Settings" class="header" rectAlignment="UpperLeft" />
-      <VerticalLayout class="no-image" childForceExpandHeight="false" spacing="12" offsetMin="0 64" offsetMax="0 -70">
+    <Panel id="settings-dialog-content" class="panel border" width="600" height="520">
+      <TextMeshPro text="Vizzy GPT Settings" class="header" rectAlignment="UpperLeft" offsetXY="20 -20" />
+      <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="12" anchorMin="0 0" anchorMax="1 1" offsetMin="20 75" offsetMax="-20 -70">
         <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine" />
         <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine" />
         <TextMeshPro text="Model" class="label" /><TextMeshProInputField id="model-input" lineType="SingleLine" />
@@ -13,9 +13,9 @@
         <TextMeshPro id="destination-host-text" class="value" />
         <TextMeshPro id="connection-status-text" class="label" />
       </VerticalLayout>
-      <Button id="test-button" class="btn" rectAlignment="LowerLeft" width="160" onClick="OnTestConnectionButtonClicked();"><TextMeshPro text="Test Connection" /></Button>
-      <Button id="cancel-button" class="btn" rectAlignment="LowerCenter" width="130" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
-      <Button id="save-button" class="btn btn-primary" rectAlignment="LowerRight" width="130" onClick="OnSaveButtonClicked();"><TextMeshPro text="Save" /></Button>
+      <Button id="test-button" class="btn" rectAlignment="LowerLeft" width="160" offsetXY="20 20" onClick="OnTestConnectionButtonClicked();"><TextMeshPro text="Test Connection" /></Button>
+      <Button id="cancel-button" class="btn" rectAlignment="LowerCenter" width="130" offsetXY="0 20" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
+      <Button id="save-button" class="btn btn-primary" rectAlignment="LowerRight" width="130" offsetXY="-20 20" onClick="OnSaveButtonClicked();"><TextMeshPro text="Save" /></Button>
     </Panel>
   </Panel>
 </XmlLayout>
