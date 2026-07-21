@@ -14,6 +14,10 @@ namespace VizzyGPT.Core.Security
             @"(authorization\s*:\s*bearer\s+)([^\s\""'<>;,]+)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+        private static readonly Regex EntityApiKey = new Regex(
+            @"(?<prefix>&quot;api_key&quot;\s*:\s*&quot;)(?<secret>(?:(?!&quot;).)*)(?=&quot;)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.Singleline);
+
         public static string Redact(string text, string? configuredApiKey = null)
         {
             if (text == null)
@@ -24,11 +28,24 @@ namespace VizzyGPT.Core.Security
             var redacted = string.IsNullOrEmpty(configuredApiKey)
                 ? text
                 : ReplaceOrdinal(text, configuredApiKey, Placeholder);
-            redacted = RedactJsonApiKeyValues(redacted);
+            return RedactStructuredValues(redacted, 0);
+        }
+
+        private static string RedactStructuredValues(string text, int depth)
+        {
+            if (depth > 8)
+            {
+                return Placeholder;
+            }
+
+            var redacted = EntityApiKey.Replace(
+                text,
+                match => match.Groups["prefix"].Value + Placeholder);
+            redacted = RedactJsonApiKeyValues(redacted, depth);
             return BearerHeader.Replace(redacted, match => match.Groups[1].Value + Placeholder);
         }
 
-        private static string RedactJsonApiKeyValues(string text)
+        private static string RedactJsonApiKeyValues(string text, int depth)
         {
             var replacements = new List<Replacement>();
             for (var index = 0; index < text.Length; index++)
@@ -47,6 +64,15 @@ namespace VizzyGPT.Core.Security
                 if (!string.Equals(propertyName, "api_key", StringComparison.Ordinal) ||
                     cursor >= text.Length || text[cursor] != ':')
                 {
+                    var nested = RedactStructuredValues(propertyName, depth + 1);
+                    if (!string.Equals(nested, propertyName, StringComparison.Ordinal))
+                    {
+                        replacements.Add(new Replacement(
+                            index,
+                            propertyEnd - index,
+                            JsonConvert.SerializeObject(nested)));
+                    }
+
                     index = propertyEnd - 1;
                     continue;
                 }
@@ -65,11 +91,17 @@ namespace VizzyGPT.Core.Security
 
                 if (!TryReadJsonString(text, cursor, out var valueEnd, out _))
                 {
-                    replacements.Add(new Replacement(cursor, text.Length - cursor));
+                    replacements.Add(new Replacement(
+                        cursor,
+                        text.Length - cursor,
+                        '"' + Placeholder + '"'));
                     break;
                 }
 
-                replacements.Add(new Replacement(cursor, valueEnd - cursor));
+                replacements.Add(new Replacement(
+                    cursor,
+                    valueEnd - cursor,
+                    '"' + Placeholder + '"'));
                 index = valueEnd - 1;
             }
 
@@ -83,7 +115,7 @@ namespace VizzyGPT.Core.Security
             foreach (var replacement in replacements)
             {
                 builder.Append(text, sourceIndex, replacement.Start - sourceIndex);
-                builder.Append('"').Append(Placeholder).Append('"');
+                builder.Append(replacement.Value);
                 sourceIndex = replacement.Start + replacement.Length;
             }
 
@@ -155,15 +187,18 @@ namespace VizzyGPT.Core.Security
 
         private readonly struct Replacement
         {
-            public Replacement(int start, int length)
+            public Replacement(int start, int length, string value)
             {
                 Start = start;
                 Length = length;
+                Value = value;
             }
 
             public int Start { get; }
 
             public int Length { get; }
+
+            public string Value { get; }
         }
     }
 }

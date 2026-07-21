@@ -101,21 +101,20 @@ namespace VizzyGPT.Core.Api
             var canonicalXml = document.ToXml();
             var complete = "EDITOR CONTEXT\nDeclarations:\n" + declarations + "\nProgram XML:\n" + canonicalXml;
             var safeComplete = Sanitize(complete);
-            var preservedSourceBytes = Encoding.UTF8.GetByteCount(
-                document.Root.ToString(SaveOptions.DisableFormatting));
-            if (preservedSourceBytes <= MaximumContextBytes &&
-                Encoding.UTF8.GetByteCount(safeComplete) <= MaximumContextBytes)
+            var selectionBuilder = new StringBuilder();
+            AppendSelection(selectionBuilder, document, selection, out var ambiguousSelection);
+            if (!ambiguousSelection && Encoding.UTF8.GetByteCount(safeComplete) <= MaximumContextBytes)
             {
                 return safeComplete;
             }
 
-            var builder = new StringBuilder();
-            builder.Append("EDITOR CONTEXT\nDeclarations:\n").Append(declarations);
-            builder.Append("\nRoot summaries:");
-            AppendRootSummaries(builder, document.Root);
-            builder.Append("\nSelected subtree:\n");
-            AppendSelection(builder, document, selection);
-            return Bound(Sanitize(builder.ToString()));
+            var summaryBuilder = new StringBuilder("Root summaries:");
+            AppendRootSummaries(summaryBuilder, document.Root);
+            return ComposeBoundedSections(
+                "EDITOR CONTEXT",
+                Sanitize("Declarations:\n" + declarations),
+                Sanitize(summaryBuilder.ToString()),
+                Sanitize("Selected subtree:\n" + selectionBuilder));
         }
 
         public string BuildFlightContext(
@@ -160,18 +159,31 @@ namespace VizzyGPT.Core.Api
                 .Skip(Math.Max(0, recentTelemetry.Length - MaximumTelemetrySamples))
                 .ToArray();
 
-            var builder = new StringBuilder("FLIGHT CONTEXT\nTelemetry summaries:");
-            AppendTelemetrySummaries(builder, recentTelemetry.Select(item => item.Sample).ToArray());
-            builder.Append("\nRecent logs:");
+            var telemetryBuilder = new StringBuilder("Telemetry summaries:");
+            AppendTelemetrySummaries(telemetryBuilder, recentTelemetry.Select(item => item.Sample).ToArray());
+            var safeTelemetry = Sanitize(telemetryBuilder.ToString());
+            var safeLogLines = new List<string>();
             foreach (var item in recentLogs)
             {
-                builder.Append('\n')
-                    .Append(item.Entry.TimestampUtc.ToString("O", CultureInfo.InvariantCulture))
-                    .Append(' ')
-                    .Append(item.Entry.Message);
+                safeLogLines.Add(Sanitize(
+                    item.Entry.TimestampUtc.ToString("O", CultureInfo.InvariantCulture) +
+                    " " + item.Entry.Message));
             }
 
-            return Bound(Sanitize(builder.ToString()));
+            var full = "FLIGHT CONTEXT\n" + safeTelemetry + "\nRecent logs:" +
+                (safeLogLines.Count == 0 ? string.Empty : "\n" + string.Join("\n", safeLogLines));
+            if (Encoding.UTF8.GetByteCount(full) <= MaximumContextBytes)
+            {
+                return full;
+            }
+
+            const int telemetryBudget = 16 * 1024;
+            var boundedTelemetry = BoundToBytes(safeTelemetry, telemetryBudget);
+            var fixedBytes = Encoding.UTF8.GetByteCount("FLIGHT CONTEXT\n\n") +
+                Encoding.UTF8.GetByteCount(boundedTelemetry);
+            var logsBudget = MaximumContextBytes - fixedBytes;
+            var boundedLogs = BuildNewestLogsSection(safeLogLines, logsBudget);
+            return "FLIGHT CONTEXT\n" + boundedTelemetry + "\n" + boundedLogs;
         }
 
         private static void AppendRootSummaries(StringBuilder builder, XElement root)
@@ -209,8 +221,10 @@ namespace VizzyGPT.Core.Api
         private static void AppendSelection(
             StringBuilder builder,
             VizzyProgramDocument document,
-            NodeSelector? selection)
+            NodeSelector? selection,
+            out bool ambiguous)
         {
+            ambiguous = false;
             if (selection == null)
             {
                 builder.Append("Selection: none");
@@ -234,6 +248,7 @@ namespace VizzyGPT.Core.Api
 
                 if (matches.Length > 1)
                 {
+                    ambiguous = true;
                     builder.Append("Selection: ambiguous");
                     return;
                 }
@@ -266,7 +281,13 @@ namespace VizzyGPT.Core.Api
                 var values = samples
                     .Where(sample => sample.Metrics.ContainsKey(metricName))
                     .Select(sample => sample.Metrics[metricName])
+                    .Where(value => !double.IsNaN(value) && !double.IsInfinity(value))
                     .ToArray();
+                if (values.Length == 0)
+                {
+                    continue;
+                }
+
                 builder.Append('\n')
                     .Append(metricName)
                     .Append(": min=")
@@ -284,14 +305,82 @@ namespace VizzyGPT.Core.Api
             return SecretRedactor.Redact(normalized, configuredApiKey);
         }
 
-        private static string Bound(string value)
+        private static string ComposeBoundedSections(string header, params string[] sections)
         {
-            if (Encoding.UTF8.GetByteCount(value) <= MaximumContextBytes)
+            var complete = header + "\n" + string.Join("\n", sections);
+            if (Encoding.UTF8.GetByteCount(complete) <= MaximumContextBytes)
+            {
+                return complete;
+            }
+
+            var separators = Encoding.UTF8.GetByteCount(header) + sections.Length;
+            var sectionBudget = (MaximumContextBytes - separators) / sections.Length;
+            var bounded = sections.Select(section => BoundToBytes(section, sectionBudget)).ToArray();
+            return header + "\n" + string.Join("\n", bounded);
+        }
+
+        private static string BuildNewestLogsSection(IReadOnlyList<string> lines, int byteBudget)
+        {
+            const string header = "Recent logs:";
+            if (lines.Count == 0)
+            {
+                return header;
+            }
+
+            var selected = new List<string>();
+            var usedBytes = Encoding.UTF8.GetByteCount(header) + Encoding.UTF8.GetByteCount(TruncationMarker);
+            for (var index = lines.Count - 1; index >= 0; index--)
+            {
+                var lineBytes = 1 + Encoding.UTF8.GetByteCount(lines[index]);
+                if (usedBytes + lineBytes > byteBudget)
+                {
+                    break;
+                }
+
+                selected.Add(lines[index]);
+                usedBytes += lineBytes;
+            }
+
+            selected.Reverse();
+            var omitted = selected.Count < lines.Count;
+            var builder = new StringBuilder(header);
+            if (omitted)
+            {
+                builder.Append(TruncationMarker);
+            }
+
+            if (selected.Count == 0)
+            {
+                var remaining = byteBudget - Encoding.UTF8.GetByteCount(builder.ToString()) - 1;
+                if (remaining > 0)
+                {
+                    builder.Append('\n').Append(BoundToBytes(lines[lines.Count - 1], remaining));
+                }
+            }
+            else
+            {
+                foreach (var line in selected)
+                {
+                    builder.Append('\n').Append(line);
+                }
+            }
+
+            return BoundToBytes(builder.ToString(), byteBudget);
+        }
+
+        private static string BoundToBytes(string value, int maximumBytes)
+        {
+            if (Encoding.UTF8.GetByteCount(value) <= maximumBytes)
             {
                 return value;
             }
 
-            var prefixBudget = MaximumContextBytes - Encoding.UTF8.GetByteCount(TruncationMarker);
+            if (maximumBytes <= Encoding.UTF8.GetByteCount(TruncationMarker))
+            {
+                return string.Empty;
+            }
+
+            var prefixBudget = maximumBytes - Encoding.UTF8.GetByteCount(TruncationMarker);
             var low = 0;
             var high = value.Length;
             while (low < high)

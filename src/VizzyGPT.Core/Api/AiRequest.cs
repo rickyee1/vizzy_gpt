@@ -65,11 +65,7 @@ namespace VizzyGPT.Core.Api
                 throw new ArgumentException("The API base URI must use HTTP or HTTPS.", nameof(baseUri));
             }
 
-            if (isHttp &&
-                !string.Equals(baseUri.Host, "localhost", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(baseUri.Host, "127.0.0.1", StringComparison.Ordinal) &&
-                !string.Equals(baseUri.Host, "::1", StringComparison.Ordinal) &&
-                !string.Equals(baseUri.Host, "[::1]", StringComparison.Ordinal))
+            if (isHttp && !HasExactLoopbackAuthority(baseUri))
             {
                 throw new ArgumentException("Plain HTTP is permitted only for an exact loopback host.", nameof(baseUri));
             }
@@ -85,6 +81,78 @@ namespace VizzyGPT.Core.Api
             var normalizedPath = baseUri.AbsolutePath.TrimEnd('/');
             var normalized = baseUri.GetLeftPart(UriPartial.Authority) + normalizedPath;
             return new Uri(normalized, UriKind.Absolute);
+        }
+
+        private static bool HasExactLoopbackAuthority(Uri baseUri)
+        {
+            var original = baseUri.OriginalString;
+            var schemeSeparator = original.IndexOf("://", StringComparison.Ordinal);
+            if (schemeSeparator < 0)
+            {
+                return false;
+            }
+
+            var authorityStart = schemeSeparator + 3;
+            var authorityEnd = original.IndexOfAny(new[] { '/', '?', '#' }, authorityStart);
+            if (authorityEnd < 0)
+            {
+                authorityEnd = original.Length;
+            }
+
+            var authority = original.Substring(authorityStart, authorityEnd - authorityStart);
+            if (authority.Length == 0 || authority.IndexOf('@') >= 0)
+            {
+                return false;
+            }
+
+            string host;
+            string port;
+            if (authority[0] == '[')
+            {
+                var closeBracket = authority.IndexOf(']');
+                if (closeBracket < 0)
+                {
+                    return false;
+                }
+
+                host = authority.Substring(0, closeBracket + 1);
+                port = authority.Substring(closeBracket + 1);
+                if (!string.Equals(host, "[::1]", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                var colon = authority.LastIndexOf(':');
+                host = colon >= 0 ? authority.Substring(0, colon) : authority;
+                port = colon >= 0 ? authority.Substring(colon) : string.Empty;
+                if (!string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(host, "127.0.0.1", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            if (port.Length == 0)
+            {
+                return true;
+            }
+
+            if (port.Length == 1 || port[0] != ':')
+            {
+                return false;
+            }
+
+            for (var index = 1; index < port.Length; index++)
+            {
+                if (port[index] < '0' || port[index] > '9')
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static string RequireValue(string value, string parameterName)

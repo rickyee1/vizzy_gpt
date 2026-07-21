@@ -59,7 +59,18 @@ namespace VizzyGPT.Core.Api
 
             EnsureSuccess(response, request.ApiKey);
             var firstBody = DecodeBody(response);
-            if (TryParseModelResponse(endpointMode, firstBody, out var validResponse, out var invalidOutput, out var validationError))
+            var firstExtraction = ExtractModelResponse(endpointMode, firstBody, request.ApiKey);
+            if (firstExtraction.Refusal != null)
+            {
+                return new AiResponse(
+                    MakeDisplaySafe(firstExtraction.Refusal, request.ApiKey),
+                    patch: null,
+                    canApply: false,
+                    Array.Empty<string>());
+            }
+
+            var invalidOutput = firstExtraction.ModelOutput!;
+            if (TryParseEnvelope(invalidOutput, out var validResponse, out var validationError))
             {
                 return validResponse;
             }
@@ -69,7 +80,18 @@ namespace VizzyGPT.Core.Api
             EnsureSuccess(repairResponse, request.ApiKey);
 
             var repairBody = DecodeBody(repairResponse);
-            if (TryParseModelResponse(endpointMode, repairBody, out validResponse, out invalidOutput, out validationError))
+            var repairExtraction = ExtractModelResponse(endpointMode, repairBody, request.ApiKey);
+            if (repairExtraction.Refusal != null)
+            {
+                return new AiResponse(
+                    MakeDisplaySafe(repairExtraction.Refusal, request.ApiKey),
+                    patch: null,
+                    canApply: false,
+                    Array.Empty<string>());
+            }
+
+            invalidOutput = repairExtraction.ModelOutput!;
+            if (TryParseEnvelope(invalidOutput, out validResponse, out validationError))
             {
                 return validResponse;
             }
@@ -108,8 +130,24 @@ namespace VizzyGPT.Core.Api
                 Encoding.UTF8.GetBytes(payload.ToString(Formatting.None)),
                 request.Timeout);
 
-            return await transport.SendAsync(transportRequest, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("The AI transport returned a null response.");
+            try
+            {
+                return await transport.SendAsync(transportRequest, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("The AI transport returned a null response.");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException(
+                    "AI transport failed: " + MakeDisplaySafe(exception.Message, request.ApiKey));
+            }
         }
 
         private static JObject CreateResponsesPayload(string model, string input)
@@ -184,8 +222,8 @@ namespace VizzyGPT.Core.Api
                         ["minItems"] = 1,
                         ["items"] = new JObject
                         {
-                            ["oneOf"] = new JArray(
-                                OperationSchema("addVariable", ("name", StringSchema()), ("value", StringSchema())),
+                            ["anyOf"] = new JArray(
+                                OperationSchema("addVariable", ("name", StringSchema()), ("value", NullableStringSchema())),
                                 OperationSchema("renameVariable", ("name", StringSchema()), ("newName", StringSchema())),
                                 OperationSchema("removeVariable", ("name", StringSchema())),
                                 OperationSchema("insertBefore", ("target", SelectorSchema()), ("node", DefinitionReference("nodeSpec"))),
@@ -203,7 +241,13 @@ namespace VizzyGPT.Core.Api
             {
                 ["nodeSpec"] = StrictObject(
                     ("element", StringSchema()),
-                    ("attributes", StrictObject()),
+                    ("attributes", new JObject
+                    {
+                        ["type"] = "array",
+                        ["items"] = StrictObject(
+                            ("name", StringSchema()),
+                            ("value", StringSchema()))
+                    }),
                     ("children", new JObject
                     {
                         ["type"] = "array",
@@ -217,7 +261,11 @@ namespace VizzyGPT.Core.Api
         {
             var allFields = new List<(string Name, JToken Schema)>
             {
-                ("type", new JObject { ["const"] = operationType })
+                ("type", new JObject
+                {
+                    ["type"] = "string",
+                    ["const"] = operationType
+                })
             };
             allFields.AddRange(fields);
             return StrictObject(allFields.ToArray());
@@ -227,7 +275,7 @@ namespace VizzyGPT.Core.Api
         {
             return new JObject
             {
-                ["oneOf"] = new JArray(
+                ["anyOf"] = new JArray(
                     StrictObject(("id", new JObject { ["type"] = "integer" })),
                     StrictObject(("path", StringSchema())))
             };
@@ -255,6 +303,16 @@ namespace VizzyGPT.Core.Api
             return new JObject { ["type"] = "string" };
         }
 
+        private static JObject NullableStringSchema()
+        {
+            return new JObject
+            {
+                ["anyOf"] = new JArray(
+                    StringSchema(),
+                    new JObject { ["type"] = "null" })
+            };
+        }
+
         private static JObject DefinitionReference(string name)
         {
             return new JObject { ["$ref"] = "#/$defs/" + name };
@@ -271,19 +329,15 @@ namespace VizzyGPT.Core.Api
                 "Validation error: " + validationError + "\nInvalid output:\n" + invalidOutput;
         }
 
-        private static bool TryParseModelResponse(
-            ApiMode endpointMode,
-            string responseBody,
+        private static bool TryParseEnvelope(
+            string modelOutput,
             out AiResponse response,
-            out string invalidOutput,
             out string validationError)
         {
             response = null!;
-            invalidOutput = responseBody;
             try
             {
-                invalidOutput = ExtractModelOutput(endpointMode, responseBody);
-                response = ParseEnvelope(invalidOutput);
+                response = ParseEnvelope(modelOutput);
                 validationError = string.Empty;
                 return true;
             }
@@ -298,28 +352,50 @@ namespace VizzyGPT.Core.Api
             }
         }
 
-        private static string ExtractModelOutput(ApiMode endpointMode, string responseBody)
+        private static ModelExtraction ExtractModelResponse(
+            ApiMode endpointMode,
+            string responseBody,
+            string apiKey)
         {
-            var root = ParseJsonObject(responseBody, "API response");
-            if (endpointMode == ApiMode.Responses)
+            try
             {
-                if (root["message"]?.Type == JTokenType.String && root["patch"] is JObject)
+                var root = ParseJsonObject(responseBody, "API response");
+                if (endpointMode == ApiMode.Responses)
                 {
-                    return responseBody;
-                }
+                    if (root["message"]?.Type == JTokenType.String && root["patch"] is JObject)
+                    {
+                        return ModelExtraction.Output(responseBody);
+                    }
 
-                if (root["output_text"]?.Type == JTokenType.String)
-                {
-                    return root["output_text"]!.Value<string>()!;
-                }
+                    if (root["output_text"]?.Type == JTokenType.String)
+                    {
+                        return ModelExtraction.Output(root["output_text"]!.Value<string>()!);
+                    }
 
-                if (root["output"] is JArray output)
-                {
+                    if (!(root["output"] is JArray output))
+                    {
+                        throw new JsonSerializationException("Responses output must be an array.");
+                    }
+
                     foreach (var item in output.OfType<JObject>())
                     {
-                        if (!(item["content"] is JArray content))
+                        if (!string.Equals(item["type"]?.Value<string>(), "message", StringComparison.Ordinal) ||
+                            !string.Equals(item["role"]?.Value<string>(), "assistant", StringComparison.Ordinal))
                         {
                             continue;
+                        }
+
+                        if (!(item["content"] is JArray content))
+                        {
+                            throw new JsonSerializationException("Responses assistant message content must be an array.");
+                        }
+
+                        var refusal = content.OfType<JObject>().FirstOrDefault(candidate =>
+                            string.Equals(candidate["type"]?.Value<string>(), "refusal", StringComparison.Ordinal) &&
+                            candidate["refusal"]?.Type == JTokenType.String);
+                        if (refusal != null)
+                        {
+                            return ModelExtraction.Refused(refusal["refusal"]!.Value<string>()!);
                         }
 
                         var outputText = content.OfType<JObject>().FirstOrDefault(candidate =>
@@ -327,23 +403,35 @@ namespace VizzyGPT.Core.Api
                             candidate["text"]?.Type == JTokenType.String);
                         if (outputText != null)
                         {
-                            return outputText["text"]!.Value<string>()!;
+                            return ModelExtraction.Output(outputText["text"]!.Value<string>()!);
                         }
                     }
+
+                    throw new JsonSerializationException(
+                        "Responses output does not contain an assistant message with output_text or refusal content.");
                 }
 
-                throw new JsonSerializationException("Responses output does not contain assistant output_text.");
-            }
+                if (!(root["choices"] is JArray choices) ||
+                    !(choices.FirstOrDefault() is JObject choice) ||
+                    !(choice["message"] is JObject message) ||
+                    !string.Equals(message["role"]?.Value<string>(), "assistant", StringComparison.Ordinal) ||
+                    message["content"]?.Type != JTokenType.String)
+                {
+                    throw new JsonSerializationException(
+                        "Chat Completions output must contain choices[0].message with assistant string content.");
+                }
 
-            var contentToken = root["choices"] is JArray choices && choices.FirstOrDefault() is JObject choice
-                ? choice["message"]?["content"]
-                : null;
-            if (contentToken?.Type != JTokenType.String)
+                return ModelExtraction.Output(message["content"]!.Value<string>()!);
+            }
+            catch (Exception exception) when (
+                exception is JsonException ||
+                exception is ArgumentException ||
+                exception is FormatException)
             {
-                throw new JsonSerializationException("Chat Completions output does not contain choices[0].message.content.");
+                throw new InvalidOperationException(
+                    "Invalid OpenAI-compatible response wrapper: " +
+                    MakeDisplaySafe(exception.Message + " Body: " + responseBody, apiKey));
             }
-
-            return contentToken.Value<string>()!;
         }
 
         private static AiResponse ParseEnvelope(string modelOutput)
@@ -373,12 +461,102 @@ namespace VizzyGPT.Core.Api
                 throw new JsonSerializationException("Patch baseHash must be a lowercase SHA-256 value.");
             }
 
-            var patch = PatchDocument.Deserialize(patchObject.ToString(Formatting.None));
+            var normalizedPatch = NormalizePatchForDomain(patchObject);
+            var patch = PatchDocument.Deserialize(normalizedPatch.ToString(Formatting.None));
             return new AiResponse(
                 root["message"]!.Value<string>()!,
                 patch,
                 canApply: true,
                 Array.Empty<string>());
+        }
+
+        private static JObject NormalizePatchForDomain(JObject patchObject)
+        {
+            var normalized = (JObject)patchObject.DeepClone();
+            if (!(normalized["operations"] is JArray operations))
+            {
+                return normalized;
+            }
+
+            foreach (var operation in operations.OfType<JObject>())
+            {
+                if (string.Equals(operation["type"]?.Value<string>(), "addVariable", StringComparison.Ordinal) &&
+                    operation["value"]?.Type == JTokenType.Null)
+                {
+                    operation.Remove("value");
+                }
+
+                if (operation["node"] is JObject node)
+                {
+                    NormalizeNodeSpecForDomain(node);
+                }
+            }
+
+            return normalized;
+        }
+
+        private static void NormalizeNodeSpecForDomain(JObject node)
+        {
+            if (node["attributes"] is JArray wireAttributes)
+            {
+                var domainAttributes = new JObject();
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var token in wireAttributes)
+                {
+                    if (!(token is JObject attribute) ||
+                        attribute.Properties().Any(property =>
+                            !string.Equals(property.Name, "name", StringComparison.Ordinal) &&
+                            !string.Equals(property.Name, "value", StringComparison.Ordinal)) ||
+                        attribute["name"]?.Type != JTokenType.String ||
+                        attribute["value"]?.Type != JTokenType.String)
+                    {
+                        throw new JsonSerializationException(
+                            "Each node attribute entry must contain exactly string fields 'name' and 'value'.");
+                    }
+
+                    var name = attribute["name"]!.Value<string>()!;
+                    if (!names.Add(name))
+                    {
+                        throw new JsonSerializationException(
+                            "Duplicate node attribute name '" + name + "'.");
+                    }
+
+                    domainAttributes[name] = attribute["value"]!.Value<string>();
+                }
+
+                node["attributes"] = domainAttributes;
+            }
+
+            if (node["children"] is JArray children)
+            {
+                foreach (var child in children.OfType<JObject>())
+                {
+                    NormalizeNodeSpecForDomain(child);
+                }
+            }
+        }
+
+        private sealed class ModelExtraction
+        {
+            private ModelExtraction(string? modelOutput, string? refusal)
+            {
+                ModelOutput = modelOutput;
+                Refusal = refusal;
+            }
+
+            public string? ModelOutput { get; }
+
+            public string? Refusal { get; }
+
+            public static ModelExtraction Output(string value)
+            {
+                return new ModelExtraction(value, null);
+            }
+
+            public static ModelExtraction Refused(string value)
+            {
+                return new ModelExtraction(null, value);
+            }
         }
 
         private static JObject ParseJsonObject(string json, string context)
@@ -423,21 +601,34 @@ namespace VizzyGPT.Core.Api
                 return false;
             }
 
+            try
+            {
+                var root = JObject.Parse(body);
+                var code = root["error"] is JObject error ? error["code"] : null;
+                if (code?.Type == JTokenType.String)
+                {
+                    var codeValue = code.Value<string>();
+                    return string.Equals(codeValue, "endpoint_not_found", StringComparison.Ordinal) ||
+                        string.Equals(codeValue, "endpoint_not_supported", StringComparison.Ordinal);
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
             var evidence = body.ToLowerInvariant();
             var identifiesEndpoint = evidence.Contains("responses endpoint") ||
-                evidence.Contains("response endpoint") ||
-                evidence.Contains("this endpoint") ||
-                evidence.Contains("/v1/responses") ||
-                evidence.Contains("endpoint_not_found") ||
-                evidence.Contains("endpoint_not_supported") ||
-                evidence.Contains("unsupported_endpoint");
+                evidence.Contains("/v1/responses");
+            var positiveAvailability = evidence.Contains("endpoint is available") ||
+                evidence.Contains("endpoint available") ||
+                evidence.Contains("responses are available");
             var unavailable = evidence.Contains("not found") ||
                 evidence.Contains("not supported") ||
                 evidence.Contains("unsupported") ||
                 evidence.Contains("unavailable") ||
                 evidence.Contains("does not exist") ||
                 evidence.Contains("cannot post");
-            return identifiesEndpoint && unavailable;
+            return identifiesEndpoint && unavailable && !positiveAvailability;
         }
 
         private static string DecodeBody(HttpTransportResponse response)

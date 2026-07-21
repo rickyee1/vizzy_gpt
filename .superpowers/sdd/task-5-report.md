@@ -287,3 +287,66 @@ The contract is corrected to match the official Structured Outputs subset docume
 The controller build found two nullable-key compiler errors at `OpenAiClientTests.cs:774-775`: Newtonsoft's `Values<string>()` annotates the selected value as nullable, so `ToDictionary` inferred `string?` despite the helper's preceding selector-shape assumptions. The key extraction now uses an explicit null-forgiving assertion after `Single()`. Test behavior and production remain unchanged.
 
 Compile-only verification with `dotnet build tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj --configuration Release --no-restore` succeeded with 0 warnings and 0 errors. No tests were run.
+
+## Task 5 Review Fix Phase B
+
+### Production Changes
+
+- Replaced operation and selector `oneOf` unions with Structured Outputs-compatible `anyOf`. Every object schema remains strict with all properties required and `additionalProperties: false`; all ten operation variants expose their exact wire fields.
+- Made `addVariable.value` a required nullable string on the wire and remove JSON `null` during domain normalization so `PatchOperation.Value` remains omitted/null.
+- Changed wire `NodeSpec.attributes` to a strict array of `{ name, value }` entries. Recursive normalization converts it to an ordinal `JObject` before `PatchDocument.Deserialize`, preserves direct compatibility envelopes that already use an attributes object, and rejects duplicate names with a repair-visible validation error.
+- Split HTTP wrapper extraction from model-envelope validation. Malformed/missing/wrong-role Responses wrappers and malformed Chat wrappers now produce sanitized protocol exceptions without repair. Official Responses refusals return safe text-only responses. Only successfully extracted assistant model text can consume the one same-endpoint schema repair.
+- Restricted official Responses extraction to `type=message`, `role=assistant`, and `output_text` content while retaining the documented top-level `output_text` and direct-envelope compatibility forms.
+- Made exact structured `endpoint_not_found` / `endpoint_not_supported` codes authoritative for 404/405 Auto fallback. Text fallback now requires an explicit Responses endpoint reference plus unavailability evidence and rejects positive availability collisions.
+- Preserved `OperationCanceledException` and `TimeoutException` unchanged. Other transport exceptions are replaced with bounded redacted exceptions without retaining a leaking inner exception; protocol and HTTP errors receive the same display-safe treatment.
+- Extended redaction through escaped nested JSON strings and HTML/XML `&quot;api_key&quot;` forms. Excessive escaped-string nesting fails closed to `[REDACTED]`.
+- Based editor small/large mode on the final normalized/redacted canonical context. Ambiguous ID selection still forces summary mode so duplicate IDs never expose an arbitrary subtree.
+- Added independent bounded budgets for declarations, root summaries, and selected subtree. Flight context separately budgets telemetry and logs, retains the newest logs when truncating, and omits nonfinite metric values while preserving finite min/max/latest summaries.
+- Validated HTTP loopback hosts from the URI's original textual authority, accepting only exact `localhost`, `127.0.0.1`, and `[::1]` forms with optional ports and rejecting .NET-normalized shorthand/octal/hex/integer IPv4 forms.
+
+### Commands And Results
+
+1. Controller RED reproduction:
+
+   ```powershell
+   & powershell -ExecutionPolicy Bypass -File 'tools\Test-Core.ps1'; $code=$LASTEXITCODE; git status --short; exit $code
+   ```
+
+   Result: Release build 0 warnings / 0 errors; 410 passed, 27 failed, 437 total. Failures matched schema/wire normalization, protocol versus repair, fallback, transport/redaction, context retention, and exact URI categories.
+
+2. Compile verification after implementation:
+
+   ```powershell
+   dotnet build tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-restore
+   ```
+
+   Result: 0 warnings / 0 errors.
+
+3. Full Core verification after implementation and again after self-review hardening:
+
+   ```powershell
+   & powershell -ExecutionPolicy Bypass -File 'tools\Test-Core.ps1'; $code=$LASTEXITCODE; git status --short; exit $code
+   ```
+
+   Final result: Release build 0 warnings / 0 errors; 437 passed, 0 failed, 0 skipped.
+
+4. Complete Task 5 verification after implementation and again after self-review hardening:
+
+   ```powershell
+   dotnet test tests/VizzyGPT.Core.Tests/VizzyGPT.Core.Tests.csproj --configuration Release --no-build --filter "FullyQualifiedName~OpenAiClientTests|FullyQualifiedName~ContextBuilderTests|FullyQualifiedName~SecretRedactorTests"
+   ```
+
+   Final result: 88 passed, 0 failed, 0 skipped.
+
+### Self-Review
+
+- Request ceilings: normal, refusal, protocol failure, HTTP failure, cancellation, timeout, and sanitized transport failure use one request; Auto endpoint fallback uses at most two; schema repair uses at most two on one endpoint; fallback plus one extracted-model repair uses at most three. Auto fallback followed by a malformed Chat wrapper stops at two.
+- Schema: no `oneOf` remains; operation and selector unions are `anyOf`; all object schemas are strict; all ten operation field sets, nullable wire value, recursive NodeSpec reference, and strict attribute entries are present.
+- Secret exposure: API/model/HTTP/transport exception messages and `ToString()` do not retain raw leaking exceptions; exact API keys, bearer values, literal/escaped nested JSON `api_key`, and HTML/XML entity forms are redacted. No test secret literals occur in production source.
+- Context: every large editor section retains its marker and independent bound; selected subtrees cannot be displaced by declarations; flight truncation selects from newest logs backward and emits selected lines chronologically; all final output is normalized, redacted, surrogate-safe, and at most 65,536 UTF-8 bytes.
+- URI checks use original authority text before .NET host normalization while endpoint construction preserves accepted ports and normalized base paths.
+- No real network endpoint or live API key was used.
+
+### Concerns
+
+None. The production-only change is covered by all 88 Task 5 cases and the complete 437-case Core suite.
