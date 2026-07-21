@@ -85,11 +85,11 @@ namespace VizzyGPT.Runtime.Ui
                 throw new ArgumentNullException(nameof(model));
             }
 
-            summaryText = layout.GetElementById<TMP_Text>("summary-text");
-            addedText = layout.GetElementById<TMP_Text>("added-text");
-            changedText = layout.GetElementById<TMP_Text>("changed-text");
-            removedText = layout.GetElementById<TMP_Text>("removed-text");
-            warningsText = layout.GetElementById<TMP_Text>("warnings-text");
+            summaryText = RequireElement<TMP_Text>(layout, "summary-text");
+            addedText = RequireElement<TMP_Text>(layout, "added-text");
+            changedText = RequireElement<TMP_Text>(layout, "changed-text");
+            removedText = RequireElement<TMP_Text>(layout, "removed-text");
+            warningsText = RequireElement<TMP_Text>(layout, "warnings-text");
             Render(model);
         }
 
@@ -129,6 +129,12 @@ namespace VizzyGPT.Runtime.Ui
             {
                 target.text = string.Join("\n", values.Select(value => SecurityElement.Escape(value ?? string.Empty) ?? string.Empty));
             }
+        }
+
+        private static T RequireElement<T>(IXmlLayout layout, string id) where T : Component
+        {
+            return layout.GetElementById<T>(id) ??
+                throw new InvalidOperationException("Vizzy GPT preview XML is missing required " + typeof(T).Name + " '" + id + "'.");
         }
 
         private void OnDestroy()

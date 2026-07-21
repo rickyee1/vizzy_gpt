@@ -72,13 +72,13 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Func<string, string, AiRequest> createRequest;
         private readonly Func<string, string, DateTime, CancellationToken, Task> saveBackupAsync;
         private readonly Func<VizzyNodeCatalog> createCatalog;
-        private readonly Action<bool> setIgnoreKeyboardInputs;
         private readonly Func<DateTime> utcNow;
         private readonly Action<VizzyGptPanelRenderState> render;
 
         private CancellationTokenSource? requestCancellation;
         private ChangeSession? session;
-        private ChangeSession? undoSession;
+        private AppliedChange? undoSession;
+        private long requestGeneration;
         private bool disposed;
 
         public VizzyGptPanelWorkflow(
@@ -87,7 +87,6 @@ namespace VizzyGPT.Runtime.Ui
             Func<string, string, AiRequest> createRequest,
             Func<string, string, DateTime, CancellationToken, Task> saveBackupAsync,
             Func<VizzyNodeCatalog> createCatalog,
-            Action<bool> setIgnoreKeyboardInputs,
             Func<DateTime> utcNow,
             Action<VizzyGptPanelRenderState> render)
         {
@@ -96,7 +95,6 @@ namespace VizzyGPT.Runtime.Ui
             this.createRequest = createRequest ?? throw new ArgumentNullException(nameof(createRequest));
             this.saveBackupAsync = saveBackupAsync ?? throw new ArgumentNullException(nameof(saveBackupAsync));
             this.createCatalog = createCatalog ?? throw new ArgumentNullException(nameof(createCatalog));
-            this.setIgnoreKeyboardInputs = setIgnoreKeyboardInputs ?? throw new ArgumentNullException(nameof(setIgnoreKeyboardInputs));
             this.utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
             this.render = render ?? throw new ArgumentNullException(nameof(render));
             RenderState();
@@ -133,6 +131,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             CancelRequest();
+            requestGeneration++;
             session = null;
             Transition(VizzyGptPanelState.Closed, string.Empty);
         }
@@ -145,19 +144,16 @@ namespace VizzyGPT.Runtime.Ui
                 throw new ArgumentOutOfRangeException(nameof(mode));
             }
 
+            if (State == VizzyGptPanelState.Sending || State == VizzyGptPanelState.Applying)
+            {
+                return;
+            }
+
             Mode = mode;
             session = null;
-            if (State != VizzyGptPanelState.Closed && State != VizzyGptPanelState.Sending && State != VizzyGptPanelState.Applying)
+            if (State != VizzyGptPanelState.Closed)
             {
                 Transition(VizzyGptPanelState.Idle, mode == VizzyGptPanelMode.Ask ? "Ask mode." : "Modify mode.");
-            }
-        }
-
-        public void SetInputFocused(bool focused)
-        {
-            if (!disposed)
-            {
-                setIgnoreKeyboardInputs(focused);
             }
         }
 
@@ -177,9 +173,11 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             CancelRequest();
+            var generation = ++requestGeneration;
             session = null;
-            requestCancellation = new CancellationTokenSource();
-            var cancellationToken = requestCancellation.Token;
+            var cancellation = new CancellationTokenSource();
+            requestCancellation = cancellation;
+            var cancellationToken = cancellation.Token;
             Transition(VizzyGptPanelState.Sending, "Sending request.");
 
             try
@@ -187,9 +185,13 @@ namespace VizzyGPT.Runtime.Ui
                 var requestContext = BuildRequestContext();
                 var response = await sendAsync(createRequest(prompt, requestContext.AiContext), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrentRequest(generation, cancellation))
+                {
+                    return;
+                }
                 AppendTranscript(response.Message);
 
-                if (Mode == VizzyGptPanelMode.Ask)
+                if (requestContext.Mode == VizzyGptPanelMode.Ask)
                 {
                     session = null;
                     Transition(VizzyGptPanelState.Idle, "Response received.");
@@ -208,17 +210,26 @@ namespace VizzyGPT.Runtime.Ui
             }
             catch (OperationCanceledException)
             {
-                Transition(VizzyGptPanelState.Idle, "Request cancelled.");
+                if (IsCurrentRequest(generation, cancellation))
+                {
+                    Transition(VizzyGptPanelState.Idle, "Request cancelled.");
+                }
             }
             catch (Exception exception)
             {
-                session = null;
-                Transition(VizzyGptPanelState.Error, exception.Message);
+                if (IsCurrentRequest(generation, cancellation))
+                {
+                    session = null;
+                    Transition(VizzyGptPanelState.Error, exception.Message);
+                }
             }
             finally
             {
-                requestCancellation?.Dispose();
-                requestCancellation = null;
+                cancellation.Dispose();
+                if (ReferenceEquals(requestCancellation, cancellation))
+                {
+                    requestCancellation = null;
+                }
             }
         }
 
@@ -275,7 +286,7 @@ namespace VizzyGPT.Runtime.Ui
                 return false;
             }
 
-            undoSession = session;
+            undoSession = new AppliedChange(session, currentXml);
             session = null;
             Transition(VizzyGptPanelState.Idle, "Changes applied.");
             return true;
@@ -289,23 +300,30 @@ namespace VizzyGPT.Runtime.Ui
                 return false;
             }
 
-            var serializerIssue = adapter.ValidateWithProgramSerializer(undoSession.BaseXml);
+            var applied = undoSession;
+            var serializerIssue = adapter.ValidateWithProgramSerializer(applied.ExactBaseXml);
             if (serializerIssue != null)
             {
                 Transition(VizzyGptPanelState.Error, serializerIssue.Message);
                 return false;
             }
 
-            if (!TryReadCurrent(out var currentXml, out _, out var error))
+            if (!TryReadCurrent(out var currentXml, out var currentHash, out var error))
             {
                 Transition(VizzyGptPanelState.Error, error ?? "Unable to read the current Vizzy program.");
+                return false;
+            }
+
+            if (!string.Equals(currentHash, applied.Session.ResultHash, StringComparison.Ordinal))
+            {
+                Transition(VizzyGptPanelState.Error, "The Vizzy program changed after GPT applied the preview.");
                 return false;
             }
 
             Transition(VizzyGptPanelState.Applying, "Saving undo backup.");
             try
             {
-                await saveBackupAsync(ProgramFingerprint(undoSession.ResultHash), currentXml, utcNow(), CancellationToken.None);
+                await saveBackupAsync(ProgramFingerprint(applied.Session.ResultHash), currentXml, utcNow(), CancellationToken.None);
             }
             catch (Exception exception)
             {
@@ -313,7 +331,7 @@ namespace VizzyGPT.Runtime.Ui
                 return false;
             }
 
-            if (!adapter.TrySetEditorProgramXml(undoSession.BaseXml, out var setError))
+            if (!adapter.TrySetEditorProgramXml(applied.ExactBaseXml, out var setError))
             {
                 Transition(VizzyGptPanelState.Error, "Undo failed: " + setError);
                 return false;
@@ -343,6 +361,7 @@ namespace VizzyGPT.Runtime.Ui
             {
                 return new RequestContext(
                     "EDITOR CONTEXT\nAsk mode does not permit program mutation.",
+                    VizzyGptPanelMode.Ask,
                     null,
                     null,
                     null);
@@ -356,6 +375,7 @@ namespace VizzyGPT.Runtime.Ui
             var document = VizzyProgramDocument.Parse(xml);
             return new RequestContext(
                 new ContextBuilder().BuildEditorContext(document, string.Empty, null),
+                VizzyGptPanelMode.Modify,
                 xml,
                 document,
                 VizzyProgramHash.Compute(document));
@@ -486,21 +506,44 @@ namespace VizzyGPT.Runtime.Ui
             return "editor-" + hash;
         }
 
+        private bool IsCurrentRequest(long generation, CancellationTokenSource cancellation)
+        {
+            return !disposed && State != VizzyGptPanelState.Closed &&
+                generation == requestGeneration && ReferenceEquals(requestCancellation, cancellation);
+        }
+
+        private sealed class AppliedChange
+        {
+            public AppliedChange(ChangeSession session, string exactBaseXml)
+            {
+                Session = session ?? throw new ArgumentNullException(nameof(session));
+                ExactBaseXml = exactBaseXml ?? throw new ArgumentNullException(nameof(exactBaseXml));
+            }
+
+            public ChangeSession Session { get; }
+
+            public string ExactBaseXml { get; }
+        }
+
         private sealed class RequestContext
         {
             public RequestContext(
                 string aiContext,
+                VizzyGptPanelMode mode,
                 string? sourceXml,
                 VizzyProgramDocument? sourceDocument,
                 string? sourceHash)
             {
                 AiContext = aiContext ?? throw new ArgumentNullException(nameof(aiContext));
+                Mode = mode;
                 SourceXml = sourceXml;
                 SourceDocument = sourceDocument;
                 SourceHash = sourceHash;
             }
 
             public string AiContext { get; }
+
+            public VizzyGptPanelMode Mode { get; }
 
             // This is retained with the parsed document/hash so the request always has one exact source snapshot.
             public string? SourceXml { get; }
@@ -559,22 +602,21 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             UnbindInput();
-            promptInput = layout.GetElementById<TMP_InputField>("prompt-input");
-            transcriptText = layout.GetElementById<TMP_Text>("transcript-text");
-            statusText = layout.GetElementById<TMP_Text>("status-text");
-            panelRoot = layout.GetElementById<RectTransform>("vizzy-gpt-panel");
-            launcherButton = layout.GetElementById<Button>("gpt-launcher-button");
-            sendButton = layout.GetElementById<Button>("send-button");
-            cancelButton = layout.GetElementById<Button>("cancel-button");
-            previewButton = layout.GetElementById<Button>("preview-button");
-            undoButton = layout.GetElementById<Button>("undo-button");
-            pendingIndicator = layout.GetElementById<Image>("pending-indicator");
+            promptInput = RequireElement<TMP_InputField>(layout, "prompt-input");
+            transcriptText = RequireElement<TMP_Text>(layout, "transcript-text");
+            statusText = RequireElement<TMP_Text>(layout, "status-text");
+            panelRoot = RequireElement<RectTransform>(layout, "vizzy-gpt-panel");
+            launcherButton = RequireElement<Button>(layout, "gpt-launcher-button");
+            sendButton = RequireElement<Button>(layout, "send-button");
+            cancelButton = RequireElement<Button>(layout, "cancel-button");
+            previewButton = RequireElement<Button>(layout, "preview-button");
+            undoButton = RequireElement<Button>(layout, "undo-button");
+            pendingIndicator = RequireElement<Image>(layout, "pending-indicator");
 
             if (promptInput != null)
             {
+                // The stock TMP input owns focus; ModApi exposes its UI focus gates as read-only.
                 promptInput.onValueChanged.AddListener(OnPromptValueChanged);
-                promptInput.onSelect.AddListener(OnPromptSelectedValue);
-                promptInput.onDeselect.AddListener(OnPromptDeselectedValue);
                 promptInput.text = prompt;
             }
 
@@ -641,16 +683,6 @@ namespace VizzyGPT.Runtime.Ui
             }
         }
 
-        public void OnPromptSelected()
-        {
-            workflow?.SetInputFocused(true);
-        }
-
-        public void OnPromptDeselected()
-        {
-            workflow?.SetInputFocused(false);
-        }
-
         public void Render(VizzyGptPanelRenderState? state)
         {
             if (state == null)
@@ -709,16 +741,6 @@ namespace VizzyGPT.Runtime.Ui
             SetPromptText(value);
         }
 
-        private void OnPromptSelectedValue(string _)
-        {
-            OnPromptSelected();
-        }
-
-        private void OnPromptDeselectedValue(string _)
-        {
-            OnPromptDeselected();
-        }
-
         private void UnbindInput()
         {
             if (promptInput == null)
@@ -727,9 +749,13 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             promptInput.onValueChanged.RemoveListener(OnPromptValueChanged);
-            promptInput.onSelect.RemoveListener(OnPromptSelectedValue);
-            promptInput.onDeselect.RemoveListener(OnPromptDeselectedValue);
             promptInput = null;
+        }
+
+        private static T RequireElement<T>(IXmlLayout layout, string id) where T : Component
+        {
+            return layout.GetElementById<T>(id) ??
+                throw new InvalidOperationException("Vizzy GPT XML is missing required " + typeof(T).Name + " '" + id + "'.");
         }
 
         private void OnDestroy()

@@ -58,21 +58,6 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
-        public void Text_focus_sets_keyboard_input_suppression()
-        {
-            var keyboardValues = new List<bool>();
-            using var workflow = CreateWorkflow(
-                new FakeAdapter(InitialXml),
-                (_, __) => Task.FromResult(new AiResponse("unused", null, false, Array.Empty<string>())),
-                setIgnoreKeyboardInputs: keyboardValues.Add);
-
-            workflow.SetInputFocused(true);
-            workflow.SetInputFocused(false);
-
-            Assert.That(keyboardValues, Is.EqualTo(new[] { true, false }));
-        }
-
-        [Test]
         public void Cancel_aborts_the_in_flight_request()
         {
             using var requestStarted = new ManualResetEventSlim();
@@ -97,6 +82,73 @@ namespace VizzyGPT.Tests.EditMode
             sending.GetAwaiter().GetResult();
 
             Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+        }
+
+        [Test]
+        public void Close_during_request_keeps_panel_closed_when_cancellation_continues()
+        {
+            using var started = new ManualResetEventSlim();
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var workflow = CreateWorkflow(new FakeAdapter(InitialXml), (_, __) =>
+            {
+                started.Set();
+                return completion.Task;
+            });
+
+            workflow.OpenPanel();
+            var sending = workflow.SendPromptAsync("cancel");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            workflow.ClosePanel();
+            completion.TrySetCanceled();
+            sending.GetAwaiter().GetResult();
+
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Closed));
+        }
+
+        [Test]
+        public void Mode_change_during_request_is_ignored_and_response_uses_captured_mode()
+        {
+            using var started = new ManualResetEventSlim();
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var workflow = CreateWorkflow(new FakeAdapter(InitialXml), (_, __) =>
+            {
+                started.Set();
+                return completion.Task;
+            });
+
+            workflow.OpenPanel();
+            var sending = workflow.SendPromptAsync("ask");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            completion.TrySetResult(CreateValidModifyResponseValue(InitialXml));
+            sending.GetAwaiter().GetResult();
+
+            Assert.That(workflow.Mode, Is.EqualTo(VizzyGptPanelMode.Ask));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(workflow.CanApply, Is.False);
+        }
+
+        [Test]
+        public void Modify_to_ask_mode_change_during_request_is_ignored()
+        {
+            using var started = new ManualResetEventSlim();
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var workflow = CreateWorkflow(new FakeAdapter(InitialXml), (_, __) =>
+            {
+                started.Set();
+                return completion.Task;
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            var sending = workflow.SendPromptAsync("modify");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            workflow.SetMode(VizzyGptPanelMode.Ask);
+            completion.TrySetResult(CreateValidModifyResponseValue(InitialXml));
+            sending.GetAwaiter().GetResult();
+
+            Assert.That(workflow.Mode, Is.EqualTo(VizzyGptPanelMode.Modify));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
         }
 
         [Test]
@@ -228,17 +280,38 @@ namespace VizzyGPT.Tests.EditMode
 
             Assert.That(workflow.UndoLastAsync().GetAwaiter().GetResult(), Is.True);
             Assert.That(adapter.SetCalls, Is.EqualTo(2));
-            Assert.That(adapter.Xml, Is.EqualTo(VizzyProgramDocument.Parse(InitialXml).ToXml()));
+            Assert.That(adapter.Xml, Is.EqualTo(InitialXml));
             Assert.That(savedBackups, Has.Count.EqualTo(2));
             Assert.That(savedBackups[0], Is.EqualTo(InitialXml));
             Assert.That(savedBackups[1], Does.Contain("Variable name=\"counter\""));
+        }
+
+        [Test]
+        public void Undo_rejects_unrelated_edits_without_backup_or_mutation()
+        {
+            var adapter = new FakeAdapter(InitialXml);
+            var backups = 0;
+            using var workflow = CreateWorkflow(adapter, CreateValidModifyResponse(InitialXml), (_, __, ___, ____) =>
+            {
+                backups++;
+                return Task.CompletedTask;
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("add").GetAwaiter().GetResult();
+            Assert.That(workflow.ApplySessionAsync().GetAwaiter().GetResult(), Is.True);
+            adapter.Xml = adapter.Xml.Replace("counter", "other");
+
+            Assert.That(workflow.UndoLastAsync().GetAwaiter().GetResult(), Is.False);
+            Assert.That(backups, Is.EqualTo(1));
+            Assert.That(adapter.SetCalls, Is.EqualTo(1));
         }
 
         private static VizzyGptPanelWorkflow CreateWorkflow(
             FakeAdapter adapter,
             Func<AiRequest, CancellationToken, Task<AiResponse>> sendAsync,
             Func<string, string, DateTime, CancellationToken, Task>? saveBackupAsync = null,
-            Action<bool>? setIgnoreKeyboardInputs = null,
             Action<VizzyGptPanelRenderState>? render = null)
         {
             return new VizzyGptPanelWorkflow(
@@ -254,7 +327,6 @@ namespace VizzyGPT.Tests.EditMode
                     TimeSpan.FromSeconds(10)),
                 saveBackupAsync ?? ((_, __, ___, ____) => Task.CompletedTask),
                 CreateCatalog,
-                setIgnoreKeyboardInputs ?? (_ => { }),
                 () => new DateTime(2026, 7, 21, 0, 0, 0, DateTimeKind.Utc),
                 render ?? (_ => { }));
         }

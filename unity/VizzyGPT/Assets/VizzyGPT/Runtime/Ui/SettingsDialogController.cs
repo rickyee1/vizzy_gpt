@@ -55,6 +55,7 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Func<string, string>? protect;
         private readonly Func<string, string>? unprotect;
         private readonly Func<AiRequest, CancellationToken, Task<AiResponse>>? testConnectionAsync;
+        private CancellationTokenSource? connectionCancellation;
 
         public SettingsDialogController(
             IDataStore store,
@@ -116,9 +117,12 @@ namespace VizzyGPT.Runtime.Ui
             VizzyGptSettingsDraft draft,
             CancellationToken cancellationToken = default)
         {
+            CancelTestConnection();
+            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connectionCancellation = cancellation;
             try
             {
-                var response = await RequireTestConnection()(BuildRequest(draft), cancellationToken).ConfigureAwait(false);
+                var response = await RequireTestConnection()(BuildRequest(draft), cancellation.Token).ConfigureAwait(false);
                 DestinationHost = BuildRequest(draft).BaseUri.Host;
                 return new SettingsConnectionResult(true, response.Message);
             }
@@ -130,6 +134,19 @@ namespace VizzyGPT.Runtime.Ui
             {
                 return new SettingsConnectionResult(false, exception.Message);
             }
+            finally
+            {
+                cancellation.Dispose();
+                if (ReferenceEquals(connectionCancellation, cancellation))
+                {
+                    connectionCancellation = null;
+                }
+            }
+        }
+
+        public void CancelTestConnection()
+        {
+            connectionCancellation?.Cancel();
         }
 
         private static AiRequest BuildRequest(VizzyGptSettingsDraft draft)
@@ -182,6 +199,7 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_InputField? timeoutInput;
         private TMP_Text? destinationHostText;
         private TMP_Text? connectionStatusText;
+        private bool disposed;
 
         public void Configure(SettingsDialogController value, Action onSettingsSaved, Action closeAction)
         {
@@ -197,13 +215,13 @@ namespace VizzyGPT.Runtime.Ui
                 throw new ArgumentNullException(nameof(layout));
             }
 
-            baseUrlInput = layout.GetElementById<TMP_InputField>("base-url-input");
-            apiModeInput = layout.GetElementById<TMP_InputField>("api-mode-input");
-            modelInput = layout.GetElementById<TMP_InputField>("model-input");
-            apiKeyInput = layout.GetElementById<TMP_InputField>("api-key-input");
-            timeoutInput = layout.GetElementById<TMP_InputField>("timeout-input");
-            destinationHostText = layout.GetElementById<TMP_Text>("destination-host-text");
-            connectionStatusText = layout.GetElementById<TMP_Text>("connection-status-text");
+            baseUrlInput = RequireElement<TMP_InputField>(layout, "base-url-input");
+            apiModeInput = RequireElement<TMP_InputField>(layout, "api-mode-input");
+            modelInput = RequireElement<TMP_InputField>(layout, "model-input");
+            apiKeyInput = RequireElement<TMP_InputField>(layout, "api-key-input");
+            timeoutInput = RequireElement<TMP_InputField>(layout, "timeout-input");
+            destinationHostText = RequireElement<TMP_Text>(layout, "destination-host-text");
+            connectionStatusText = RequireElement<TMP_Text>(layout, "connection-status-text");
             if (baseUrlInput != null)
             {
                 baseUrlInput.onValueChanged.AddListener(OnBaseUrlChanged);
@@ -235,6 +253,11 @@ namespace VizzyGPT.Runtime.Ui
             {
                 var activeController = RequireController();
                 var result = await activeController.TestConnectionAsync(ReadDraft());
+                if (disposed || !ReferenceEquals(controller, activeController))
+                {
+                    return;
+                }
+
                 RenderDestination(activeController.DestinationHost);
                 RenderStatus(result.Status);
             }
@@ -246,6 +269,7 @@ namespace VizzyGPT.Runtime.Ui
 
         public void OnCancelButtonClicked()
         {
+            controller?.CancelTestConnection();
             close?.Invoke();
         }
 
@@ -334,8 +358,16 @@ namespace VizzyGPT.Runtime.Ui
             return SecurityElement.Escape(value ?? string.Empty) ?? string.Empty;
         }
 
+        private static T RequireElement<T>(IXmlLayout layout, string id) where T : Component
+        {
+            return layout.GetElementById<T>(id) ??
+                throw new InvalidOperationException("Vizzy GPT settings XML is missing required " + typeof(T).Name + " '" + id + "'.");
+        }
+
         private void OnDestroy()
         {
+            disposed = true;
+            controller?.CancelTestConnection();
             if (baseUrlInput != null)
             {
                 baseUrlInput.onValueChanged.RemoveListener(OnBaseUrlChanged);

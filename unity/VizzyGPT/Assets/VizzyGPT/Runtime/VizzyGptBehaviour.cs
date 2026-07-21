@@ -92,7 +92,6 @@ namespace VizzyGPT.Runtime
                 (fingerprint, xml, createdUtc, cancellationToken) =>
                     activeStore.SaveBackupAsync(fingerprint, xml, createdUtc, cancellationToken),
                 CreateVizzyCatalog,
-                SetIgnoreKeyboardInputs,
                 () => DateTime.UtcNow,
                 panel.Render);
             panel.Configure(workflow, OpenSettingsDialog, OpenPreviewDialog);
@@ -224,12 +223,6 @@ namespace VizzyGPT.Runtime
                 apiKey = null;
                 Debug.LogWarning("VizzyGPT could not load saved settings: " + exception.Message);
             }
-        }
-
-        private void SetIgnoreKeyboardInputs(bool focused)
-        {
-            // IUserInterface.IgnoreKeyboardInputs is documented as read-only in ModTools 1.11.
-            // Keep this seam so the workflow remains testable without using private game APIs.
         }
 
         private FileDataStore RequireStore()

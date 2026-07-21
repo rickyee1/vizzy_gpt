@@ -4,7 +4,7 @@
   <Button id="gpt-launcher-button" class="icon-button" rectAlignment="MiddleRight" offsetXY="-12 0" icon="Ui/Sprites/Common/IconButtonMenu" onClick="OnOpenPanelButtonClicked();" tooltip="Open Vizzy GPT" tooltipPosition="Left" />
   <Panel id="vizzy-gpt-panel" class="panel border" rectAlignment="MiddleRight" width="420" height="620" padding="12" offsetXY="-16 0" active="false">
     <TextMeshPro text="Vizzy GPT" class="header" rectAlignment="UpperLeft" />
-    <Button id="settings-button" class="icon-button" rectAlignment="UpperRight" icon="Ui/Sprites/Common/IconButtonMenu" onClick="OnSettingsButtonClicked();" tooltip="Settings" tooltipPosition="Left" />
+    <Button id="settings-button" class="icon-button" rectAlignment="UpperRight" icon="Ui/Sprites/Common/IconSettings" onClick="OnSettingsButtonClicked();" tooltip="Settings" tooltipPosition="Left" />
     <Button id="close-button" class="icon-button" rectAlignment="UpperRight" offsetXY="-48 0" icon="Ui/Sprites/Common/IconCloseButton" onClick="OnClosePanelButtonClicked();" tooltip="Close" tooltipPosition="Left" />
     <Panel class="toggle-buttons" rectAlignment="UpperCenter" offsetXY="0 -42">
       <TextMeshPro text="Mode" />
@@ -18,10 +18,10 @@
     </VerticalScrollView>
     <TextMeshPro id="status-text" class="label" rectAlignment="LowerLeft" width="75%" offsetXY="0 62" />
     <Image id="pending-indicator" color="Primary" width="10" height="10" rectAlignment="LowerRight" offsetXY="38 65" active="false" />
-    <TextMeshProInputField id="prompt-input" lineType="MultiLineNewline" rectAlignment="LowerCenter" height="74" width="100%" placeholderText="Ask about this Vizzy program" />
+    <TextMeshProInputField id="prompt-input" lineType="MultiLineNewline" rectAlignment="LowerCenter" height="74" width="100%" />
     <Button id="undo-button" class="icon-button" rectAlignment="LowerLeft" icon="Ui/Sprites/Design/IconButtonUndo" onClick="OnUndoButtonClicked();" tooltip="Undo last GPT apply" tooltipPosition="Above" />
     <Button id="preview-button" class="btn" rectAlignment="LowerRight" width="86" offsetXY="-138 14" onClick="OnPreviewButtonClicked();"><TextMeshPro text="Preview" /></Button>
-    <Button id="send-button" class="btn btn-primary" rectAlignment="LowerRight" width="64" offsetXY="-64 14" onClick="OnSendButtonClicked();"><TextMeshPro text="Send" /></Button>
+    <Button id="send-button" class="icon-button" rectAlignment="LowerRight" icon="Ui/Sprites/Design/IconButtonPlay" offsetXY="-64 14" onClick="OnSendButtonClicked();" tooltip="Send" tooltipPosition="Above" />
     <Button id="cancel-button" class="icon-button" rectAlignment="LowerRight" icon="Ui/Sprites/Common/IconCloseButton" onClick="OnCancelButtonClicked();" tooltip="Cancel request" tooltipPosition="Above" offsetXY="0 14" />
   </Panel>
 </XmlLayout>

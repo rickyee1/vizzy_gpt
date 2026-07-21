@@ -68,6 +68,32 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(store.SaveProtectedApiKeyCalls, Is.EqualTo(0));
         }
 
+        [Test]
+        public void Cancel_test_connection_cancels_the_owned_request()
+        {
+            var completion = new TaskCompletionSource<AiResponse>();
+            var observed = default(CancellationToken);
+            var controller = new SettingsDialogController(
+                new FakeStore(),
+                value => value,
+                value => value,
+                (_, cancellationToken) =>
+                {
+                    observed = cancellationToken;
+                    return completion.Task;
+                });
+            var draft = new VizzyGptSettingsDraft("https://api.example.test", ApiMode.Auto, "test", "key", 10);
+
+            var pending = controller.TestConnectionAsync(draft);
+            controller.CancelTestConnection();
+            Assert.That(observed.IsCancellationRequested, Is.True);
+            completion.TrySetCanceled(observed);
+            var result = pending.GetAwaiter().GetResult();
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.Status, Is.EqualTo("Connection test cancelled."));
+        }
+
         private sealed class FakeStore : IDataStore
         {
             public NonSecretSettings? Settings { get; private set; }
