@@ -16,7 +16,13 @@ MonoBehaviour:
   MonitorContainingFolder: 1
   folders:
   - Content/XML UI
-  AutomaticallyRemoveEntries: 1
+  AutomaticallyRemoveEntries: 0
   entries:
+  - path: VizzyGPT/VizzyGptPanel
+    resource: {fileID: 4900000, guid: f1348ea3406c6e747858a07a2574e98a, type: 3}
+  - path: VizzyGPT/PreviewDialog
+    resource: {fileID: 4900000, guid: 56c2f77f8adaa1048aa5e8d05f87653a, type: 3}
+  - path: VizzyGPT/SettingsDialog
+    resource: {fileID: 4900000, guid: c430157d929be5a4eb22b5fc340c018b, type: 3}
   - path: VizzyGPT/UIResourceDatabase
     resource: {fileID: 11400000}

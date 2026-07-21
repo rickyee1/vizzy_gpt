@@ -21,6 +21,9 @@ namespace VizzyGPT.Runtime
     public sealed class VizzyGptBehaviour : MonoBehaviour
     {
         private const string VizzyToolboxResourcePath = "Ui/Xml/Vizzy/VizzyToolbox";
+        private const string VizzyGptPanelResourcePath = "VizzyGPT/VizzyGptPanel";
+        private const string PreviewDialogResourcePath = "VizzyGPT/PreviewDialog";
+        private const string SettingsDialogResourcePath = "VizzyGPT/SettingsDialog";
 
         private IUserInterface? userInterface;
         private FileDataStore? store;
@@ -67,7 +70,7 @@ namespace VizzyGPT.Runtime
                 return;
             }
 
-            var panelXml = Resources.Load<TextAsset>("Ui/VizzyGptPanel");
+            var panelXml = userInterface.ResourceDatabase.GetResource<TextAsset>(VizzyGptPanelResourcePath);
             if (panelXml == null)
             {
                 Debug.LogWarning("VizzyGPT panel XML resource is unavailable.");
@@ -146,7 +149,7 @@ namespace VizzyGPT.Runtime
                 return;
             }
 
-            var previewXml = Resources.Load<TextAsset>("Ui/PreviewDialog");
+            var previewXml = userInterface.ResourceDatabase.GetResource<TextAsset>(PreviewDialogResourcePath);
             if (previewXml == null)
             {
                 Debug.LogWarning("VizzyGPT preview XML resource is unavailable.");
@@ -172,7 +175,7 @@ namespace VizzyGPT.Runtime
                 return;
             }
 
-            var settingsXml = Resources.Load<TextAsset>("Ui/SettingsDialog");
+            var settingsXml = userInterface.ResourceDatabase.GetResource<TextAsset>(SettingsDialogResourcePath);
             if (settingsXml == null)
             {
                 Debug.LogWarning("VizzyGPT settings XML resource is unavailable.");

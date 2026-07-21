@@ -55,6 +55,41 @@ namespace VizzyGPT.Tests.EditMode
             }
         }
 
+        [Test]
+        public void Mod_data_declares_the_ui_resource_database()
+        {
+            var modDataPath = Path.Combine(Application.dataPath, "ModData.asset");
+            var modData = File.ReadAllText(modDataPath);
+
+            Assert.That(modData, Does.Contain("_uiResourceDatabases:\n  - {fileID: 11400000, guid: 779cac5c7816ca948aa58773c0d0ee45, type: 3}"));
+        }
+
+        [TestCase("VizzyGPT/VizzyGptPanel", "f1348ea3406c6e747858a07a2574e98a")]
+        [TestCase("VizzyGPT/PreviewDialog", "56c2f77f8adaa1048aa5e8d05f87653a")]
+        [TestCase("VizzyGPT/SettingsDialog", "c430157d929be5a4eb22b5fc340c018b")]
+        public void Ui_resource_database_declares_each_packaged_xml(string resourcePath, string guid)
+        {
+            var databasePath = Path.Combine(Application.dataPath, "Content", "XML UI", "UIResourceDatabase.asset");
+            var database = File.ReadAllText(databasePath);
+
+            Assert.That(database, Does.Contain("AutomaticallyRemoveEntries: 0"));
+            Assert.That(database, Does.Contain(
+                "- path: " + resourcePath + "\n    resource: {fileID: 4900000, guid: " + guid + ", type: 3}"));
+        }
+
+        [Test]
+        public void Behaviour_uses_documented_ui_resource_database_paths()
+        {
+            var behaviourPath = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "VizzyGptBehaviour.cs");
+            var source = File.ReadAllText(behaviourPath);
+
+            Assert.That(source, Does.Contain("VizzyGPT/VizzyGptPanel"));
+            Assert.That(source, Does.Contain("VizzyGPT/PreviewDialog"));
+            Assert.That(source, Does.Contain("VizzyGPT/SettingsDialog"));
+            Assert.That(source, Does.Contain("ResourceDatabase.GetResource<TextAsset>"));
+            Assert.That(source, Does.Not.Contain("Resources.Load<TextAsset>"));
+        }
+
         private static IEnumerable<TestCaseData> Resources()
         {
             yield return new TestCaseData("VizzyGptPanel.xml", PanelIds);
