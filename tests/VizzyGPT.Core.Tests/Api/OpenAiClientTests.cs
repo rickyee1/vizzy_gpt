@@ -238,6 +238,19 @@ namespace VizzyGPT.Core.Tests.Api
         }
 
         [Test]
+        public void Auto_does_not_fallback_when_plain_text_says_endpoint_works_but_model_is_missing()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(404, "Responses endpoint works; requested model not found"));
+
+            var exception = Assert.ThrowsAsync<OpenAiApiException>(
+                async () => await new OpenAiClient(transport).SendAsync(Request(ApiMode.Auto), CancellationToken.None));
+
+            Assert.That(exception!.StatusCode, Is.EqualTo(404));
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+        }
+
+        [Test]
         public async Task Auto_textual_fallback_requires_clear_responses_endpoint_unavailability()
         {
             var transport = new FakeTransport();
@@ -248,6 +261,25 @@ namespace VizzyGPT.Core.Tests.Api
 
             Assert.That(transport.Requests, Has.Count.EqualTo(2));
             AssertValidResponse(result, "Text fallback");
+        }
+
+        [Test]
+        public async Task Auto_fallback_then_extracted_model_repair_is_bounded_to_three_requests()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(404, ErrorBody("No", "endpoint_not_found")));
+            transport.Enqueue(Response(200, ChatBody("invalid-envelope")));
+            transport.Enqueue(Response(200, ChatBody(ValidEnvelope("Fallback repair"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Auto), CancellationToken.None);
+
+            Assert.That(transport.Requests.Select(request => request.Uri.AbsolutePath), Is.EqualTo(new[]
+            {
+                "/openai/v1/responses",
+                "/openai/v1/chat/completions",
+                "/openai/v1/chat/completions"
+            }));
+            AssertValidResponse(result, "Fallback repair");
         }
 
         [Test]
@@ -420,6 +452,33 @@ namespace VizzyGPT.Core.Tests.Api
             transport.Enqueue(Response(200, RefusalBody("I cannot provide that change.")));
 
             var response = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+            Assert.That(response.Message, Is.EqualTo("I cannot provide that change."));
+            Assert.That(response.Patch, Is.Null);
+            Assert.That(response.CanApply, Is.False);
+            Assert.That(response.Diagnostics.All(IsDisplaySafeSingleLine), Is.True);
+        }
+
+        [Test]
+        public async Task Official_chat_refusal_returns_text_only_result_without_repair()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, new JObject
+            {
+                ["choices"] = new JArray(new JObject
+                {
+                    ["message"] = new JObject
+                    {
+                        ["role"] = "assistant",
+                        ["refusal"] = "I cannot provide that change."
+                    }
+                })
+            }.ToString(Formatting.None)));
+
+            var response = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.ChatCompletions),
+                CancellationToken.None);
 
             Assert.That(transport.Requests, Has.Count.EqualTo(1));
             Assert.That(response.Message, Is.EqualTo("I cannot provide that change."));
@@ -1076,8 +1135,26 @@ namespace VizzyGPT.Core.Tests.Api
 
             Assert.That(context, Is.EqualTo(repeated));
             Assert.That(context, Does.Contain("Selection: ambiguous"));
-            Assert.That(context, Does.Not.Contain("first-choice"));
-            Assert.That(context, Does.Not.Contain("second-choice"));
+            Assert.That(context, Does.Contain(document.ToXml()));
+            Assert.That(context, Does.Contain("first-choice"));
+            Assert.That(context, Does.Contain("second-choice"));
+            Assert.That(Encoding.UTF8.GetByteCount(context), Is.LessThanOrEqualTo(MaximumContextBytes));
+        }
+
+        [Test]
+        public void Small_editor_context_with_ambiguous_id_keeps_complete_canonical_xml()
+        {
+            var document = VizzyProgramDocument.Parse(
+                "<Program><Variables /><Instructions>" +
+                "<Event id='7' event='First' /><Event id='7' event='Second' />" +
+                "</Instructions><Expressions /></Program>");
+
+            var context = new ContextBuilder(ApiKey).BuildEditorContext(
+                document,
+                "Variable: pitch",
+                new NodeSelector(7, null));
+
+            Assert.That(context, Does.Contain(document.ToXml()));
             Assert.That(Encoding.UTF8.GetByteCount(context), Is.LessThanOrEqualTo(MaximumContextBytes));
         }
 

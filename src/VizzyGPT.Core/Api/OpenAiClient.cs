@@ -414,11 +414,21 @@ namespace VizzyGPT.Core.Api
                 if (!(root["choices"] is JArray choices) ||
                     !(choices.FirstOrDefault() is JObject choice) ||
                     !(choice["message"] is JObject message) ||
-                    !string.Equals(message["role"]?.Value<string>(), "assistant", StringComparison.Ordinal) ||
-                    message["content"]?.Type != JTokenType.String)
+                    !string.Equals(message["role"]?.Value<string>(), "assistant", StringComparison.Ordinal))
                 {
                     throw new JsonSerializationException(
-                        "Chat Completions output must contain choices[0].message with assistant string content.");
+                        "Chat Completions output must contain choices[0].message with the assistant role.");
+                }
+
+                if (message["refusal"]?.Type == JTokenType.String)
+                {
+                    return ModelExtraction.Refused(message["refusal"]!.Value<string>()!);
+                }
+
+                if (message["content"]?.Type != JTokenType.String)
+                {
+                    throw new JsonSerializationException(
+                        "Chat Completions assistant message must contain string content or refusal.");
                 }
 
                 return ModelExtraction.Output(message["content"]!.Value<string>()!);
@@ -617,18 +627,29 @@ namespace VizzyGPT.Core.Api
             }
 
             var evidence = body.ToLowerInvariant();
-            var identifiesEndpoint = evidence.Contains("responses endpoint") ||
-                evidence.Contains("/v1/responses");
-            var positiveAvailability = evidence.Contains("endpoint is available") ||
-                evidence.Contains("endpoint available") ||
-                evidence.Contains("responses are available");
-            var unavailable = evidence.Contains("not found") ||
-                evidence.Contains("not supported") ||
-                evidence.Contains("unsupported") ||
-                evidence.Contains("unavailable") ||
-                evidence.Contains("does not exist") ||
-                evidence.Contains("cannot post");
-            return identifiesEndpoint && unavailable && !positiveAvailability;
+            return ContainsAny(evidence,
+                "responses endpoint not found",
+                "responses endpoint is not found",
+                "responses endpoint not supported",
+                "responses endpoint is not supported",
+                "responses endpoint unsupported",
+                "responses endpoint is unsupported",
+                "responses endpoint unavailable",
+                "responses endpoint is unavailable",
+                "responses endpoint does not exist",
+                "cannot post /v1/responses",
+                "/v1/responses not found",
+                "/v1/responses is not found",
+                "/v1/responses not supported",
+                "/v1/responses is not supported",
+                "/v1/responses unsupported",
+                "/v1/responses unavailable",
+                "/v1/responses does not exist");
+        }
+
+        private static bool ContainsAny(string value, params string[] phrases)
+        {
+            return phrases.Any(phrase => value.Contains(phrase));
         }
 
         private static string DecodeBody(HttpTransportResponse response)

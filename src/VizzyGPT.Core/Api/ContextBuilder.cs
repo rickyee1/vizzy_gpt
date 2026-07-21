@@ -98,12 +98,17 @@ namespace VizzyGPT.Core.Api
                 throw new ArgumentNullException(nameof(declarations));
             }
 
-            var canonicalXml = document.ToXml();
-            var complete = "EDITOR CONTEXT\nDeclarations:\n" + declarations + "\nProgram XML:\n" + canonicalXml;
-            var safeComplete = Sanitize(complete);
             var selectionBuilder = new StringBuilder();
             AppendSelection(selectionBuilder, document, selection, out var ambiguousSelection);
-            if (!ambiguousSelection && Encoding.UTF8.GetByteCount(safeComplete) <= MaximumContextBytes)
+            var canonicalXml = document.ToXml();
+            var complete = "EDITOR CONTEXT\nDeclarations:\n" + declarations + "\nProgram XML:\n" + canonicalXml;
+            if (ambiguousSelection)
+            {
+                complete += "\nSelected subtree:\n" + selectionBuilder;
+            }
+
+            var safeComplete = Sanitize(complete);
+            if (Encoding.UTF8.GetByteCount(safeComplete) <= MaximumContextBytes)
             {
                 return safeComplete;
             }

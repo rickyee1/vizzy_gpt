@@ -25,10 +25,10 @@ namespace VizzyGPT.Core.Security
                 throw new ArgumentNullException(nameof(text));
             }
 
-            var redacted = string.IsNullOrEmpty(configuredApiKey)
-                ? text
-                : ReplaceOrdinal(text, configuredApiKey, Placeholder);
-            return RedactStructuredValues(redacted, 0);
+            var redacted = RedactStructuredValues(text, 0);
+            return string.IsNullOrEmpty(configuredApiKey)
+                ? redacted
+                : ReplaceOrdinal(redacted, configuredApiKey, Placeholder);
         }
 
         private static string RedactStructuredValues(string text, int depth)

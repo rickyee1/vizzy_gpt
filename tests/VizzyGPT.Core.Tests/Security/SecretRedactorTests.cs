@@ -115,6 +115,17 @@ namespace VizzyGPT.Core.Tests.Security
             Assert.That(result.Replace("[REDACTED]", string.Empty), Does.Not.Contain("REDACTED"));
         }
 
+        [Test]
+        public void Redact_handles_configured_key_that_matches_a_structured_property_name()
+        {
+            const string input = "{\"api_key\":\"json-secret\"}";
+
+            var result = SecretRedactor.Redact(input, "api_key");
+
+            Assert.That(result, Does.Contain("[REDACTED]"));
+            Assert.That(result, Does.Not.Contain("json-secret"));
+        }
+
         private static int Count(string value, string fragment)
         {
             var count = 0;
