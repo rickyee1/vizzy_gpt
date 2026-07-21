@@ -132,8 +132,8 @@ namespace VizzyGPT.Tests.EditMode
             var panel = LoadResource("VizzyGptPanel.xml");
             AssertAnchoredRect(panel, "panel-title", "0 1", "0 1", "0 1", "12 -44", "240 -12");
             AssertAnchoredRect(panel, "mode-label", "0 1", "0 1", "0 1", "0 -20", "80 0");
-            AssertAnchoredRect(panel, "status-text", "0 0", "0 0", "0 0", "12 98", "312 122");
-            AssertAnchoredRect(panel, "pending-indicator", "0 0", "0 0", "0 0", "326 104", "336 114");
+            AssertAnchoredRect(panel, "status-text", "0 0", "0 0", "0 0", "12 144", "312 168");
+            AssertAnchoredRect(panel, "pending-indicator", "0 0", "0 0", "0 0", "326 150", "336 160");
             AssertToggleHalf(panel, "ask-toggle", "LowerLeft");
             AssertToggleHalf(panel, "modify-toggle", "LowerRight");
             AssertNonOverlappingToggleHalves(panel);
@@ -295,36 +295,124 @@ namespace VizzyGPT.Tests.EditMode
 
         private static void AssertPanelVerticalBands(XmlDocument document)
         {
+            var styles = LoadStockStyles();
+            var panel = document.SelectSingleNode("//*[@id='vizzy-gpt-panel']") as XmlElement;
             var prompt = document.SelectSingleNode("//*[@id='prompt-input']") as XmlElement;
             var status = document.SelectSingleNode("//*[@id='status-text']") as XmlElement;
             var pending = document.SelectSingleNode("//*[@id='pending-indicator']") as XmlElement;
             var transcript = document.SelectSingleNode("//*[@id='transcript-scroll']") as XmlElement;
+            Assert.That(panel, Is.Not.Null);
             Assert.That(prompt, Is.Not.Null);
             Assert.That(status, Is.Not.Null);
             Assert.That(pending, Is.Not.Null);
             Assert.That(transcript, Is.Not.Null);
 
-            var promptBottom = ParseSecondInt(prompt!.GetAttribute("offsetXY"));
-            var promptTop = promptBottom + ParseInt(prompt.GetAttribute("height"));
-            var statusRect = new Rect(ParseFirstInt(status!.GetAttribute("offsetMin")), ParseSecondInt(status.GetAttribute("offsetMin")),
-                ParseFirstInt(status.GetAttribute("offsetMax")) - ParseFirstInt(status.GetAttribute("offsetMin")),
-                ParseSecondInt(status.GetAttribute("offsetMax")) - ParseSecondInt(status.GetAttribute("offsetMin")));
-            var pendingRect = new Rect(ParseFirstInt(pending!.GetAttribute("offsetMin")), ParseSecondInt(pending.GetAttribute("offsetMin")),
-                ParseFirstInt(pending.GetAttribute("offsetMax")) - ParseFirstInt(pending.GetAttribute("offsetMin")),
-                ParseSecondInt(pending.GetAttribute("offsetMax")) - ParseSecondInt(pending.GetAttribute("offsetMin")));
-            var transcriptBottom = ParseSecondInt(transcript!.GetAttribute("offsetMin"));
-            var transcriptTop = ParseSecondInt(transcript.GetAttribute("offsetMax"));
+            var panelWidth = ParseInt(panel!.GetAttribute("width"));
+            var panelHeight = ParseInt(panel.GetAttribute("height"));
+            var promptRect = GetLowerAlignedRect(prompt!, styles, panelWidth);
+            var statusRect = GetAnchoredRect(status!, panelWidth, panelHeight);
+            var pendingRect = GetAnchoredRect(pending!, panelWidth, panelHeight);
+            var transcriptRect = GetAnchoredRect(transcript!, panelWidth, panelHeight);
+            var controls = new[]
+            {
+                GetLowerAlignedRect(GetElement(document, "undo-button"), styles, panelWidth),
+                GetLowerAlignedRect(GetElement(document, "preview-button"), styles, panelWidth),
+                GetLowerAlignedRect(GetElement(document, "send-button"), styles, panelWidth),
+                GetLowerAlignedRect(GetElement(document, "cancel-button"), styles, panelWidth)
+            };
 
-            Assert.That(statusRect.yMin, Is.GreaterThan(promptTop), "Status overlaps prompt.");
-            Assert.That(pendingRect.yMin, Is.GreaterThan(promptTop), "Pending indicator overlaps prompt.");
-            Assert.That(transcriptBottom, Is.GreaterThan(statusRect.yMax), "Transcript overlaps status.");
-            Assert.That(transcriptBottom, Is.GreaterThan(pendingRect.yMax), "Transcript overlaps pending indicator.");
-            Assert.That(transcriptBottom, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
-            Assert.That(transcriptTop, Is.LessThan(0), "Transcript top offset must reserve upper controls.");
+            for (var index = 0; index < controls.Length; index++)
+            {
+                Assert.That(controls[index].Overlaps(promptRect), Is.False, "Bottom control overlaps prompt: " + index);
+                for (var next = index + 1; next < controls.Length; next++)
+                {
+                    Assert.That(controls[index].Overlaps(controls[next]), Is.False, "Bottom controls overlap.");
+                }
+            }
+
+            Assert.That(promptRect.yMin, Is.GreaterThan(controls[0].yMax));
+            Assert.That(promptRect.yMin, Is.GreaterThan(controls[1].yMax));
+            Assert.That(promptRect.yMin, Is.GreaterThan(controls[2].yMax));
+            Assert.That(promptRect.yMin, Is.GreaterThan(controls[3].yMax));
+            Assert.That(statusRect.Overlaps(promptRect), Is.False, "Status overlaps prompt.");
+            Assert.That(pendingRect.Overlaps(promptRect), Is.False, "Pending indicator overlaps prompt.");
+            Assert.That(statusRect.Overlaps(pendingRect), Is.False, "Status overlaps pending indicator.");
+            Assert.That(transcriptRect.Overlaps(promptRect), Is.False, "Transcript overlaps prompt.");
+            Assert.That(transcriptRect.Overlaps(statusRect), Is.False, "Transcript overlaps status.");
+            Assert.That(transcriptRect.Overlaps(pendingRect), Is.False, "Transcript overlaps pending indicator.");
+            Assert.That(promptRect.yMax, Is.LessThan(statusRect.yMin));
+            Assert.That(promptRect.yMax, Is.LessThan(pendingRect.yMin));
+            Assert.That(statusRect.yMax, Is.LessThan(transcriptRect.yMin));
+            Assert.That(pendingRect.yMax, Is.LessThan(transcriptRect.yMin));
+            Assert.That(transcriptRect.yMin, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
+            Assert.That(transcriptRect.yMax, Is.LessThan(panelHeight), "Transcript top offset must reserve upper controls.");
             Assert.That(statusRect.width, Is.GreaterThan(0));
             Assert.That(statusRect.height, Is.GreaterThan(0));
             Assert.That(pendingRect.width, Is.GreaterThan(0));
             Assert.That(pendingRect.height, Is.GreaterThan(0));
+        }
+
+        private static XmlDocument LoadStockStyles()
+        {
+            var path = Path.Combine(Application.dataPath, "ModTools", "UI", "Xml", "Styles.xml");
+            var document = new XmlDocument();
+            document.Load(path);
+            return document;
+        }
+
+        private static XmlElement GetElement(XmlDocument document, string id)
+        {
+            var element = document.SelectSingleNode("//*[@id='" + id + "']") as XmlElement;
+            Assert.That(element, Is.Not.Null, id);
+            return element!;
+        }
+
+        private static Rect GetLowerAlignedRect(XmlElement element, XmlDocument styles, int panelWidth)
+        {
+            var width = GetResolvedDimension(element, styles, "width");
+            var height = GetResolvedDimension(element, styles, "height");
+            var offset = ParsePair(element.GetAttribute("offsetXY"));
+            var alignment = element.GetAttribute("rectAlignment");
+            var x = alignment == "LowerLeft"
+                ? offset.X
+                : alignment == "LowerCenter"
+                    ? (panelWidth - width) / 2 + offset.X
+                    : panelWidth - width + offset.X;
+
+            Assert.That(alignment == "LowerLeft" || alignment == "LowerCenter" || alignment == "LowerRight", Is.True,
+                element.GetAttribute("id"));
+            return new Rect(x, offset.Y, width, height);
+        }
+
+        private static int GetResolvedDimension(XmlElement element, XmlDocument styles, string dimension)
+        {
+            if (element.HasAttribute(dimension))
+            {
+                return ParseInt(element.GetAttribute(dimension));
+            }
+
+            var className = element.GetAttribute("class");
+            Assert.That(className, Is.Not.Empty, element.GetAttribute("id") + " must resolve " + dimension + " from stock styles.");
+            var style = styles.SelectSingleNode("//*[local-name()='" + element.LocalName + "' and @class='" + className + "']") as XmlElement;
+            Assert.That(style, Is.Not.Null, className);
+            Assert.That(style!.HasAttribute(dimension), Is.True, className + " must declare " + dimension + ".");
+            return ParseInt(style.GetAttribute(dimension));
+        }
+
+        private static Rect GetAnchoredRect(XmlElement element, int panelWidth, int panelHeight)
+        {
+            var anchorMin = ParsePair(element.GetAttribute("anchorMin"));
+            var anchorMax = ParsePair(element.GetAttribute("anchorMax"));
+            var offsetMin = ParsePair(element.GetAttribute("offsetMin"));
+            var offsetMax = ParsePair(element.GetAttribute("offsetMax"));
+            var minX = panelWidth * anchorMin.X + offsetMin.X;
+            var minY = panelHeight * anchorMin.Y + offsetMin.Y;
+            var maxX = panelWidth * anchorMax.X + offsetMax.X;
+            var maxY = panelHeight * anchorMax.Y + offsetMax.Y;
+
+            Assert.That(maxX, Is.GreaterThan(minX), element.GetAttribute("id") + " width");
+            Assert.That(maxY, Is.GreaterThan(minY), element.GetAttribute("id") + " height");
+            return new Rect(minX, minY, maxX - minX, maxY - minY);
         }
 
         private static int ParseInt(string value)
