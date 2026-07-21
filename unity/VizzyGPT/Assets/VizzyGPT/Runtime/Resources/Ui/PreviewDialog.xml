@@ -3,7 +3,7 @@
   <Include path="Ui/Xml/Styles.xml" />
   <Panel id="preview-dialog" class="dialog-background">
     <Panel id="preview-dialog-content" class="panel border" width="680" height="560">
-      <TextMeshPro text="Vizzy GPT Preview" class="header" rectAlignment="UpperLeft" offsetXY="20 -20" />
+      <TextMeshPro id="preview-title" text="Vizzy GPT Preview" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -52" offsetMax="400 -20" />
       <TextMeshPro id="summary-text" class="value" rectAlignment="UpperCenter" width="640" offsetXY="0 -60" />
       <VerticalScrollView id="preview-scroll" class="no-image" anchorMin="0 0" anchorMax="1 1" offsetMin="20 75" offsetMax="-20 -110">
         <VerticalLayout class="no-image" childForceExpandHeight="false" spacing="10">

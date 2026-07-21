@@ -12,9 +12,6 @@ namespace VizzyGPT.Tests.EditMode
 {
     public sealed class XmlUiComponentContractTests
     {
-        private const string StockToggleButtonSchemaError =
-            "The element 'http://www.w3schools.com:ToggleButton' cannot contain child element " +
-            "'http://www.w3schools.com:TextMeshPro' because the parent element's content model is text only.";
         private static readonly string[] PanelIds =
         {
             "gpt-launcher-button", "vizzy-gpt-panel", "settings-button", "close-button",
@@ -129,6 +126,25 @@ namespace VizzyGPT.Tests.EditMode
             AssertSurfaceHasStableGeometry("SettingsDialog.xml", "settings-dialog-content", "settings-form", "save-button");
         }
 
+        [Test]
+        public void Key_panel_text_and_mode_controls_have_explicit_non_overlapping_geometry()
+        {
+            var panel = LoadResource("VizzyGptPanel.xml");
+            AssertAnchoredRect(panel, "panel-title", "0 1", "0 1", "0 1", "12 -44", "240 -12");
+            AssertAnchoredRect(panel, "mode-label", "0 1", "0 1", "0 1", "0 -20", "80 0");
+            AssertAnchoredRect(panel, "status-text", "0 0", "0 0", "0 0", "12 98", "312 122");
+            AssertAnchoredRect(panel, "pending-indicator", "0 0", "0 0", "0 0", "326 104", "336 114");
+            AssertToggleHalf(panel, "ask-toggle", "LowerLeft");
+            AssertToggleHalf(panel, "modify-toggle", "LowerRight");
+            AssertNonOverlappingToggleHalves(panel);
+            AssertPanelVerticalBands(panel);
+
+            var preview = LoadResource("PreviewDialog.xml");
+            AssertAnchoredRect(preview, "preview-title", "0 1", "0 1", "0 1", "20 -52", "400 -20");
+            var settings = LoadResource("SettingsDialog.xml");
+            AssertAnchoredRect(settings, "settings-title", "0 1", "0 1", "0 1", "20 -52", "400 -20");
+        }
+
         private static IEnumerable<TestCaseData> Resources()
         {
             yield return new TestCaseData("VizzyGptPanel.xml", PanelIds);
@@ -140,13 +156,13 @@ namespace VizzyGPT.Tests.EditMode
         {
             var schemas = new XmlSchemaSet();
             schemas.Add("http://www.w3schools.com", schemaPath);
-            var errors = new List<string>();
+            var errors = new List<XmlSchemaException>();
             var settings = new XmlReaderSettings
             {
                 ValidationType = ValidationType.Schema,
                 Schemas = schemas
             };
-            settings.ValidationEventHandler += (_, args) => errors.Add(args.Message);
+            settings.ValidationEventHandler += (_, args) => errors.Add(args.Exception);
             var document = new XmlDocument();
             using (var reader = XmlReader.Create(resourcePath, settings))
             {
@@ -155,12 +171,23 @@ namespace VizzyGPT.Tests.EditMode
 
             if (allowStockToggleButtonText)
             {
-                var knownErrors = errors.FindAll(error => string.Equals(error, StockToggleButtonSchemaError, StringComparison.Ordinal));
+                var lines = File.ReadAllLines(resourcePath);
+                var knownLines = new HashSet<int>();
+                for (var index = 0; index < lines.Length; index++)
+                {
+                    if (lines[index].Contains("<TextMeshPro text=\"Ask\"") || lines[index].Contains("<TextMeshPro text=\"Modify\""))
+                    {
+                        knownLines.Add(index + 1);
+                    }
+                }
+
+                var knownErrors = errors.FindAll(error => IsKnownStockToggleButtonChildError(error, knownLines));
+                Assert.That(knownLines, Has.Count.EqualTo(2));
                 Assert.That(knownErrors, Has.Count.EqualTo(2), "Expected only the two known stock ToggleButton schema false positives.");
-                errors.RemoveAll(error => string.Equals(error, StockToggleButtonSchemaError, StringComparison.Ordinal));
+                errors.RemoveAll(error => IsKnownStockToggleButtonChildError(error, knownLines));
             }
 
-            Assert.That(errors, Is.Empty, string.Join("\n", errors));
+            Assert.That(errors, Is.Empty, string.Join("\n", errors.ConvertAll(error => error.Message)));
             return document;
         }
 
@@ -182,6 +209,14 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(action!.HasAttribute("width") || action.HasAttribute("offsetXY"), Is.True, actionId);
         }
 
+        private static bool IsKnownStockToggleButtonChildError(XmlSchemaException error, ISet<int> knownLines)
+        {
+            return knownLines.Contains(error.LineNumber)
+                && error.LinePosition > 0
+                && error.Message.IndexOf("ToggleButton", StringComparison.Ordinal) >= 0
+                && error.Message.IndexOf("TextMeshPro", StringComparison.Ordinal) >= 0;
+        }
+
         private static void AssertToggle(XmlDocument document, XmlNamespaceManager namespaceManager, string id, string text, string onValueChanged)
         {
             var toggle = document.SelectSingleNode("//*[@id='" + id + "']", namespaceManager) as XmlElement;
@@ -191,6 +226,140 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(labels, Is.Not.Null);
             Assert.That(labels!.Count, Is.EqualTo(1), id + " must have exactly one label.");
             Assert.That(((XmlElement)labels[0]!).GetAttribute("text"), Is.EqualTo(text));
+        }
+
+        private static XmlDocument LoadResource(string resourceName)
+        {
+            var path = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "Resources", "Ui", resourceName);
+            var document = new XmlDocument();
+            document.Load(path);
+            return document;
+        }
+
+        private static void AssertAnchoredRect(XmlDocument document, string id, string anchorMin, string anchorMax, string pivot, string offsetMin, string offsetMax)
+        {
+            var element = document.SelectSingleNode("//*[@id='" + id + "']") as XmlElement;
+            Assert.That(element, Is.Not.Null, id);
+            Assert.That(element!.GetAttribute("anchorMin"), Is.EqualTo(anchorMin), id);
+            Assert.That(element.GetAttribute("anchorMax"), Is.EqualTo(anchorMax), id);
+            Assert.That(element.GetAttribute("pivot"), Is.EqualTo(pivot), id);
+            Assert.That(element.GetAttribute("offsetMin"), Is.EqualTo(offsetMin), id);
+            Assert.That(element.GetAttribute("offsetMax"), Is.EqualTo(offsetMax), id);
+
+            var parsedAnchorMin = ParsePair(anchorMin);
+            var parsedAnchorMax = ParsePair(anchorMax);
+            var parsedOffsetMin = ParsePair(offsetMin);
+            var parsedOffsetMax = ParsePair(offsetMax);
+            Assert.That(parsedAnchorMin.X, Is.InRange(0, 1), id + " anchorMin.x");
+            Assert.That(parsedAnchorMin.Y, Is.InRange(0, 1), id + " anchorMin.y");
+            Assert.That(parsedAnchorMax.X, Is.InRange(0, 1), id + " anchorMax.x");
+            Assert.That(parsedAnchorMax.Y, Is.InRange(0, 1), id + " anchorMax.y");
+            Assert.That(parsedAnchorMin.X, Is.LessThanOrEqualTo(parsedAnchorMax.X), id + " anchors x");
+            Assert.That(parsedAnchorMin.Y, Is.LessThanOrEqualTo(parsedAnchorMax.Y), id + " anchors y");
+            Assert.That(parsedOffsetMin.X, Is.LessThan(parsedOffsetMax.X), id + " width");
+            Assert.That(parsedOffsetMin.Y, Is.LessThan(parsedOffsetMax.Y), id + " height");
+        }
+
+        private static void AssertToggleHalf(XmlDocument document, string id, string alignment)
+        {
+            var element = document.SelectSingleNode("//*[@id='" + id + "']") as XmlElement;
+            Assert.That(element, Is.Not.Null, id);
+            Assert.That(element!.GetAttribute("rectAlignment"), Is.EqualTo(alignment), id);
+            Assert.That(element.GetAttribute("width"), Is.EqualTo("138"), id);
+            Assert.That(element.GetAttribute("height"), Is.EqualTo("25"), id);
+        }
+
+        private static void AssertNonOverlappingToggleHalves(XmlDocument document)
+        {
+            var group = document.SelectSingleNode("//*[@id='mode-toggle-group']") as XmlElement;
+            Assert.That(group, Is.Not.Null);
+            var groupWidth = ParseInt(group!.GetAttribute("width"));
+            var groupHeight = ParseInt(group.GetAttribute("height"));
+            var askWidth = ParseInt(((XmlElement)document.SelectSingleNode("//*[@id='ask-toggle']")!).GetAttribute("width"));
+            var modifyWidth = ParseInt(((XmlElement)document.SelectSingleNode("//*[@id='modify-toggle']")!).GetAttribute("width"));
+            var askHeight = ParseInt(((XmlElement)document.SelectSingleNode("//*[@id='ask-toggle']")!).GetAttribute("height"));
+            var modifyHeight = ParseInt(((XmlElement)document.SelectSingleNode("//*[@id='modify-toggle']")!).GetAttribute("height"));
+            var ask = new Rect(0, 0, askWidth, askHeight);
+            var modify = new Rect(groupWidth - modifyWidth, 0, modifyWidth, modifyHeight);
+
+            Assert.That(ask.xMin, Is.GreaterThanOrEqualTo(0));
+            Assert.That(ask.xMax, Is.LessThanOrEqualTo(groupWidth));
+            Assert.That(ask.yMin, Is.GreaterThanOrEqualTo(0));
+            Assert.That(ask.yMax, Is.LessThanOrEqualTo(groupHeight));
+            Assert.That(modify.xMin, Is.GreaterThanOrEqualTo(0));
+            Assert.That(modify.xMax, Is.LessThanOrEqualTo(groupWidth));
+            Assert.That(modify.yMin, Is.GreaterThanOrEqualTo(0));
+            Assert.That(modify.yMax, Is.LessThanOrEqualTo(groupHeight));
+            Assert.That(ask.Overlaps(modify), Is.False, "Ask and Modify rectangles overlap.");
+        }
+
+        private static void AssertPanelVerticalBands(XmlDocument document)
+        {
+            var prompt = document.SelectSingleNode("//*[@id='prompt-input']") as XmlElement;
+            var status = document.SelectSingleNode("//*[@id='status-text']") as XmlElement;
+            var pending = document.SelectSingleNode("//*[@id='pending-indicator']") as XmlElement;
+            var transcript = document.SelectSingleNode("//*[@id='transcript-scroll']") as XmlElement;
+            Assert.That(prompt, Is.Not.Null);
+            Assert.That(status, Is.Not.Null);
+            Assert.That(pending, Is.Not.Null);
+            Assert.That(transcript, Is.Not.Null);
+
+            var promptBottom = ParseSecondInt(prompt!.GetAttribute("offsetXY"));
+            var promptTop = promptBottom + ParseInt(prompt.GetAttribute("height"));
+            var statusRect = new Rect(ParseFirstInt(status!.GetAttribute("offsetMin")), ParseSecondInt(status.GetAttribute("offsetMin")),
+                ParseFirstInt(status.GetAttribute("offsetMax")) - ParseFirstInt(status.GetAttribute("offsetMin")),
+                ParseSecondInt(status.GetAttribute("offsetMax")) - ParseSecondInt(status.GetAttribute("offsetMin")));
+            var pendingRect = new Rect(ParseFirstInt(pending!.GetAttribute("offsetMin")), ParseSecondInt(pending.GetAttribute("offsetMin")),
+                ParseFirstInt(pending.GetAttribute("offsetMax")) - ParseFirstInt(pending.GetAttribute("offsetMin")),
+                ParseSecondInt(pending.GetAttribute("offsetMax")) - ParseSecondInt(pending.GetAttribute("offsetMin")));
+            var transcriptBottom = ParseSecondInt(transcript!.GetAttribute("offsetMin"));
+            var transcriptTop = ParseSecondInt(transcript.GetAttribute("offsetMax"));
+
+            Assert.That(statusRect.yMin, Is.GreaterThan(promptTop), "Status overlaps prompt.");
+            Assert.That(pendingRect.yMin, Is.GreaterThan(promptTop), "Pending indicator overlaps prompt.");
+            Assert.That(transcriptBottom, Is.GreaterThan(statusRect.yMax), "Transcript overlaps status.");
+            Assert.That(transcriptBottom, Is.GreaterThan(pendingRect.yMax), "Transcript overlaps pending indicator.");
+            Assert.That(transcriptBottom, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
+            Assert.That(transcriptTop, Is.LessThan(0), "Transcript top offset must reserve upper controls.");
+            Assert.That(statusRect.width, Is.GreaterThan(0));
+            Assert.That(statusRect.height, Is.GreaterThan(0));
+            Assert.That(pendingRect.width, Is.GreaterThan(0));
+            Assert.That(pendingRect.height, Is.GreaterThan(0));
+        }
+
+        private static int ParseInt(string value)
+        {
+            return int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static int ParseSecondInt(string value)
+        {
+            return ParsePair(value).Y;
+        }
+
+        private static int ParseFirstInt(string value)
+        {
+            return ParsePair(value).X;
+        }
+
+        private static IntPair ParsePair(string value)
+        {
+            var values = value.Split(' ');
+            Assert.That(values, Has.Length.EqualTo(2));
+            return new IntPair(ParseInt(values[0]), ParseInt(values[1]));
+        }
+
+        private readonly struct IntPair
+        {
+            public IntPair(int x, int y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public int X { get; }
+
+            public int Y { get; }
         }
     }
 }

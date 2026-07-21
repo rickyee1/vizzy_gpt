@@ -3,7 +3,7 @@
   <Include path="Ui/Xml/Styles.xml" />
   <Panel id="settings-dialog" class="dialog-background">
     <Panel id="settings-dialog-content" class="panel border" width="600" height="520">
-      <TextMeshPro text="Vizzy GPT Settings" class="header" rectAlignment="UpperLeft" offsetXY="20 -20" />
+      <TextMeshPro id="settings-title" text="Vizzy GPT Settings" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -52" offsetMax="400 -20" />
       <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="12" anchorMin="0 0" anchorMax="1 1" offsetMin="20 75" offsetMax="-20 -70">
         <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine" />
         <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine" />
