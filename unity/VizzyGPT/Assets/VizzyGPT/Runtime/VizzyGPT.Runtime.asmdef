@@ -1,0 +1,10 @@
+{
+  "name": "VizzyGPT.Runtime",
+  "rootNamespace": "VizzyGPT.Runtime",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "autoReferenced": true
+}

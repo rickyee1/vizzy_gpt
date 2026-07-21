@@ -1,0 +1,9 @@
+{
+	"name": "VizzyGPT",
+	"references": [
+		"UnityEngine.UI",
+		"Unity.TextMeshPro",
+		"Unity.Mathematics",
+		"VizzyGPT.Runtime"
+	]
+}
