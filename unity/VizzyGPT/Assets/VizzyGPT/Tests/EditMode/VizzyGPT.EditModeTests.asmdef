@@ -1,14 +1,20 @@
 {
   "name": "VizzyGPT.EditModeTests",
   "rootNamespace": "VizzyGPT.Tests.EditMode",
-  "references": [],
+  "references": [
+    "VizzyGPT.Runtime"
+  ],
   "includePlatforms": [
     "Editor"
   ],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
-  "overrideReferences": false,
-  "precompiledReferences": [],
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "ModApi.dll",
+    "ModApi.Core.dll",
+    "VizzyGPT.Core.dll"
+  ],
   "autoReferenced": false,
   "defineConstraints": [],
   "versionDefines": [],
