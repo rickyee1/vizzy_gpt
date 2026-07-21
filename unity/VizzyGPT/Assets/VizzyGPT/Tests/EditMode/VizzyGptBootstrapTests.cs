@@ -33,6 +33,8 @@ namespace VizzyGPT.Tests.EditMode
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
             var rootModType = assemblies.Select(assembly => assembly.GetType("Assets.Scripts.Mod"))
                 .First(type => type != null);
+            var runtimeModType = assemblies.Select(assembly => assembly.GetType("VizzyGPT.Runtime.VizzyGptMod"))
+                .First(type => type != null);
             var behaviourType = assemblies.Select(assembly => assembly.GetType("VizzyGPT.Runtime.VizzyGptBehaviour"))
                 .First(type => type != null);
             var instance = rootModType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)
@@ -40,10 +42,15 @@ namespace VizzyGPT.Tests.EditMode
             var initialize = rootModType.GetMethod(
                 "OnModInitialized",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+            var runtimeInitialize = runtimeModType.GetMethod(
+                "OnModInitialized",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
 
             Assert.That(initialize, Is.Not.Null, "The builder-generated root Mod must forward initialization.");
+            Assert.That(runtimeInitialize, Is.Not.Null);
 
             initialize.Invoke(instance, null);
+            runtimeInitialize.Invoke(Activator.CreateInstance(runtimeModType), null);
             initialize.Invoke(instance, null);
 
             var roots = Resources.FindObjectsOfTypeAll<GameObject>()

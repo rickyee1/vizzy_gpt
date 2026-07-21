@@ -1,3 +1,7 @@
+param(
+    [string]$UnityPath = $env:UNITY_EDITOR_PATH
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -5,13 +9,21 @@ $projectPath = Join-Path $root 'unity\VizzyGPT'
 $artifacts = Join-Path $root 'artifacts'
 $results = Join-Path $artifacts 'editmode-results.xml'
 $log = Join-Path $artifacts 'unity-editmode.log'
-$unity = 'D:\Unity\Hub\Editor\2022.3.62f1\Editor\Unity.exe'
+$unityCandidates = @(
+    $UnityPath,
+    'D:\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe',
+    'C:\Program Files\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe',
+    'D:\Unity\Hub\Editor\2022.3.62f1\Editor\Unity.exe',
+    'C:\Program Files\Unity\Hub\Editor\2022.3.62f1\Editor\Unity.exe'
+) | Where-Object { $_ }
+$unity = $unityCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 
-if (-not (Test-Path -LiteralPath $unity)) {
-    throw "Unity editor not found: $unity"
+if (-not $unity) {
+    throw "Unity editor not found. Pass -UnityPath or set UNITY_EDITOR_PATH. Checked: $($unityCandidates -join ', ')"
 }
 
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
+Remove-Item -LiteralPath $results, $log -Force -ErrorAction SilentlyContinue
 $arguments = @(
     '-batchmode',
     '-nographics',
