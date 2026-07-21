@@ -9,16 +9,23 @@ namespace VizzyGPT.Runtime.Adapters
 {
     internal sealed class RuntimeContract
     {
-        public RuntimeContract(UnityEngine.Object instance, MemberInfo flightProgramMember, MethodInfo refreshMethod)
+        public RuntimeContract(
+            UnityEngine.Object instance,
+            MemberInfo flightProgramMember,
+            object refreshTarget,
+            MethodInfo refreshMethod)
         {
             Instance = instance;
             FlightProgramMember = flightProgramMember;
+            RefreshTarget = refreshTarget;
             RefreshMethod = refreshMethod;
         }
 
         public UnityEngine.Object Instance { get; }
 
         public MemberInfo FlightProgramMember { get; }
+
+        public object RefreshTarget { get; }
 
         public MethodInfo RefreshMethod { get; }
     }
@@ -41,10 +48,12 @@ namespace VizzyGPT.Runtime.Adapters
                     continue;
                 }
 
-                var refreshMethod = FindPublicRefreshMethod(type);
                 foreach (var instance in FindInstances(type))
                 {
-                    candidates.Add(new RuntimeContract(instance, member, refreshMethod));
+                    if (TryFindRefreshContract(type, instance, out var refreshTarget, out var refreshMethod))
+                    {
+                        candidates.Add(new RuntimeContract(instance, member, refreshTarget, refreshMethod));
+                    }
                 }
             }
 
@@ -165,6 +174,36 @@ namespace VizzyGPT.Runtime.Adapters
                     yield return instance;
                 }
             }
+        }
+
+        private static bool TryFindRefreshContract(
+            Type editorType,
+            UnityEngine.Object editor,
+            out object refreshTarget,
+            out MethodInfo refreshMethod)
+        {
+            refreshMethod = FindPublicRefreshMethod(editorType);
+            if (refreshMethod != null)
+            {
+                refreshTarget = editor;
+                return true;
+            }
+
+            var controller = editorType
+                .GetField("_controller", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(editor);
+            if (controller != null)
+            {
+                refreshMethod = FindPublicRefreshMethod(controller.GetType());
+                if (refreshMethod != null)
+                {
+                    refreshTarget = controller;
+                    return true;
+                }
+            }
+
+            refreshTarget = null;
+            return false;
         }
 
         private static MethodInfo FindPublicRefreshMethod(Type type)

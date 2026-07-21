@@ -12,8 +12,6 @@ namespace VizzyGPT.Runtime.Adapters
 {
     public sealed class VizzyRuntimeAdapter : IVizzyRuntimeAdapter
     {
-        private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
-
         private readonly ProgramSerializer serializer = new ProgramSerializer();
         private readonly RuntimeContractProbe probe = new RuntimeContractProbe();
         private RuntimeContract editorContract;
@@ -233,33 +231,7 @@ namespace VizzyGPT.Runtime.Adapters
 
         private static void RefreshEditor(RuntimeContract contract)
         {
-            if (contract.RefreshMethod != null)
-            {
-                contract.RefreshMethod.Invoke(contract.Instance, null);
-                return;
-            }
-
-            var controller = contract.Instance.GetType()
-                .GetField("_controller", PrivateInstance)
-                ?.GetValue(contract.Instance);
-            if (controller == null)
-            {
-                throw new InvalidOperationException("Vizzy editor refresh controller is unavailable.");
-            }
-
-            InvokeRefresh(controller, "RefreshUI");
-            InvokeRefresh(controller, "RefreshCategory");
-        }
-
-        private static void InvokeRefresh(object controller, string name)
-        {
-            var method = controller.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
-            if (method == null)
-            {
-                throw new InvalidOperationException("Vizzy editor controller method is unavailable: " + name);
-            }
-
-            method.Invoke(controller, null);
+            contract.RefreshMethod.Invoke(contract.RefreshTarget, null);
         }
     }
 }
