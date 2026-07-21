@@ -7,6 +7,19 @@ using UnityEngine;
 
 namespace VizzyGPT.Runtime.Adapters
 {
+    internal sealed class RefreshContract
+    {
+        public RefreshContract(object target, MethodInfo method)
+        {
+            Target = target;
+            Method = method;
+        }
+
+        public object Target { get; }
+
+        public MethodInfo Method { get; }
+    }
+
     internal sealed class RuntimeContract
     {
         public RuntimeContract(
@@ -33,6 +46,13 @@ namespace VizzyGPT.Runtime.Adapters
     public sealed class RuntimeContractProbe
     {
         private const BindingFlags PublicInstance = BindingFlags.Instance | BindingFlags.Public;
+        private readonly Func<UnityEngine.Object, RefreshContract> privateRefreshContractResolver;
+
+        internal RuntimeContractProbe(Func<UnityEngine.Object, RefreshContract> privateRefreshContractResolver)
+        {
+            this.privateRefreshContractResolver = privateRefreshContractResolver ??
+                throw new ArgumentNullException(nameof(privateRefreshContractResolver));
+        }
 
         internal RuntimeContract ProbeEditor()
         {
@@ -176,7 +196,7 @@ namespace VizzyGPT.Runtime.Adapters
             }
         }
 
-        private static bool TryFindRefreshContract(
+        private bool TryFindRefreshContract(
             Type editorType,
             UnityEngine.Object editor,
             out object refreshTarget,
@@ -189,24 +209,19 @@ namespace VizzyGPT.Runtime.Adapters
                 return true;
             }
 
-            var controller = editorType
-                .GetField("_controller", BindingFlags.Instance | BindingFlags.NonPublic)
-                ?.GetValue(editor);
-            if (controller != null)
+            var privateRefreshContract = privateRefreshContractResolver(editor);
+            if (privateRefreshContract != null)
             {
-                refreshMethod = FindPublicRefreshMethod(controller.GetType());
-                if (refreshMethod != null)
-                {
-                    refreshTarget = controller;
-                    return true;
-                }
+                refreshTarget = privateRefreshContract.Target;
+                refreshMethod = privateRefreshContract.Method;
+                return true;
             }
 
             refreshTarget = null;
             return false;
         }
 
-        private static MethodInfo FindPublicRefreshMethod(Type type)
+        internal static MethodInfo FindPublicRefreshMethod(Type type)
         {
             return new[] { "RefreshUI", "RefreshCategory", "Refresh", "Rebuild" }
                 .Select(name => type.GetMethod(name, PublicInstance, null, Type.EmptyTypes, null))

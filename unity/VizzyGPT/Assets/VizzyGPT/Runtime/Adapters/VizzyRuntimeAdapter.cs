@@ -12,8 +12,10 @@ namespace VizzyGPT.Runtime.Adapters
 {
     public sealed class VizzyRuntimeAdapter : IVizzyRuntimeAdapter
     {
+        private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+
         private readonly ProgramSerializer serializer = new ProgramSerializer();
-        private readonly RuntimeContractProbe probe = new RuntimeContractProbe();
+        private readonly RuntimeContractProbe probe = new RuntimeContractProbe(ResolvePrivateRefreshContract);
         private RuntimeContract editorContract;
 
         public bool IsEditorAvailable => GetEditorContract() != null;
@@ -232,6 +234,27 @@ namespace VizzyGPT.Runtime.Adapters
         private static void RefreshEditor(RuntimeContract contract)
         {
             contract.RefreshMethod.Invoke(contract.RefreshTarget, null);
+        }
+
+        private static RefreshContract ResolvePrivateRefreshContract(UnityEngine.Object editor)
+        {
+            try
+            {
+                var controller = editor.GetType()
+                    .GetField("_controller", PrivateInstance)
+                    ?.GetValue(editor);
+                if (controller == null)
+                {
+                    return null;
+                }
+
+                var method = RuntimeContractProbe.FindPublicRefreshMethod(controller.GetType());
+                return method == null ? null : new RefreshContract(controller, method);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
     }
 }
