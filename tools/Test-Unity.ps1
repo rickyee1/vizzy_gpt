@@ -23,7 +23,12 @@ if (-not $unity) {
 }
 
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
-Remove-Item -LiteralPath $results, $log -Force -ErrorAction SilentlyContinue
+foreach ($path in @($results, $log)) {
+    if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force
+    }
+}
+
 $arguments = @(
     '-batchmode',
     '-nographics',
