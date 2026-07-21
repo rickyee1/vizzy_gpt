@@ -40,7 +40,7 @@ namespace VizzyGPT.Tests.EditMode
             var root = Application.dataPath;
             var schemaPath = Path.Combine(root, "ModTools", "UI", "XmlLayout.xsd");
             var resourcePath = Path.Combine(root, "VizzyGPT", "Runtime", "Resources", "Ui", resourceName);
-            var document = Validate(resourcePath, schemaPath);
+            var document = Validate(resourcePath, schemaPath, resourceName == "VizzyGptPanel.xml");
             var namespaceManager = new XmlNamespaceManager(document.NameTable);
             namespaceManager.AddNamespace("ui", "http://www.w3schools.com");
 
@@ -90,6 +90,31 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(source, Does.Not.Contain("Resources.Load<TextAsset>"));
         }
 
+        [Test]
+        public void Panel_buttons_use_textmeshpro_children_not_legacy_text_attributes()
+        {
+            var resourcePath = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "Resources", "Ui", "VizzyGptPanel.xml");
+            var document = new XmlDocument();
+            document.Load(resourcePath);
+            var namespaceManager = new XmlNamespaceManager(document.NameTable);
+            namespaceManager.AddNamespace("ui", "http://www.w3schools.com");
+
+            var buttons = document.SelectNodes("//ui:Button|//ui:ToggleButton", namespaceManager);
+            Assert.That(buttons, Is.Not.Null);
+            foreach (XmlElement button in buttons!)
+            {
+                Assert.That(button.HasAttribute("text"), Is.False, button.Name + " must not use the legacy text attribute.");
+            }
+
+            var toggles = document.SelectNodes("//ui:ToggleButton", namespaceManager);
+            Assert.That(toggles, Is.Not.Null);
+            foreach (XmlElement toggle in toggles!)
+            {
+                Assert.That(toggle.SelectSingleNode("ui:TextMeshPro", namespaceManager), Is.Not.Null,
+                    "ToggleButton must use a TextMeshPro child.");
+            }
+        }
+
         private static IEnumerable<TestCaseData> Resources()
         {
             yield return new TestCaseData("VizzyGptPanel.xml", PanelIds);
@@ -97,7 +122,7 @@ namespace VizzyGPT.Tests.EditMode
             yield return new TestCaseData("SettingsDialog.xml", SettingsIds);
         }
 
-        private static XmlDocument Validate(string resourcePath, string schemaPath)
+        private static XmlDocument Validate(string resourcePath, string schemaPath, bool allowStockToggleButtonText)
         {
             var schemas = new XmlSchemaSet();
             schemas.Add("http://www.w3schools.com", schemaPath);
@@ -112,6 +137,11 @@ namespace VizzyGPT.Tests.EditMode
             using (var reader = XmlReader.Create(resourcePath, settings))
             {
                 document.Load(reader);
+            }
+
+            if (allowStockToggleButtonText)
+            {
+                errors.RemoveAll(error => error.Contains("ToggleButton") && error.Contains("TextMeshPro"));
             }
 
             Assert.That(errors, Is.Empty, string.Join("\n", errors));

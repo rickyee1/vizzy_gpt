@@ -9,8 +9,12 @@
     <Panel class="toggle-buttons" rectAlignment="UpperCenter" offsetXY="0 -42">
       <TextMeshPro text="Mode" />
       <ToggleGroup allowSwitchOff="false">
-        <ToggleButton id="ask-toggle" text="Ask" isOn="true" onValueChanged="OnAskModeClicked();" />
-        <ToggleButton id="modify-toggle" text="Modify" onValueChanged="OnModifyModeClicked();" />
+        <ToggleButton id="ask-toggle" isOn="true" onValueChanged="OnAskModeClicked();">
+          <TextMeshPro text="Ask" />
+        </ToggleButton>
+        <ToggleButton id="modify-toggle" onValueChanged="OnModifyModeClicked();">
+          <TextMeshPro text="Modify" />
+        </ToggleButton>
       </ToggleGroup>
     </Panel>
     <VerticalScrollView id="transcript-scroll" class="no-image" rectAlignment="UpperCenter" offsetMin="0 130" offsetMax="0 -82">
