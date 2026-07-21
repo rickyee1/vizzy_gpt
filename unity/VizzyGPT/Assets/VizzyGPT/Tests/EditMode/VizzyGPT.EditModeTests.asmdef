@@ -2,7 +2,9 @@
   "name": "VizzyGPT.EditModeTests",
   "rootNamespace": "VizzyGPT.Tests.EditMode",
   "references": [
-    "VizzyGPT.Runtime"
+    "VizzyGPT.Runtime",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
   ],
   "includePlatforms": [
     "Editor"

@@ -42,6 +42,69 @@ namespace VizzyGPT.Core.Storage
                 : this.rootDirectory + Path.DirectorySeparatorChar;
         }
 
+        public Task SaveNonSecretSettingsAsync(
+            NonSecretSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            if (settings == null)
+            {
+                throw new ArgumentNullException(nameof(settings));
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var json = JsonConvert.SerializeObject(settings, Formatting.None, JsonSettings);
+            return WriteAtomicAsync(NonSecretSettingsPath(), json, cancellationToken);
+        }
+
+        public async Task<NonSecretSettings?> LoadNonSecretSettingsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = NonSecretSettingsPath();
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var json = await File.ReadAllTextAsync(path, Utf8WithoutBom, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return JsonConvert.DeserializeObject<NonSecretSettings>(json, JsonSettings)
+                ?? throw new JsonSerializationException("Non-secret settings JSON deserialized to null.");
+        }
+
+        public Task SaveProtectedApiKeyAsync(
+            string protectedApiKey,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(protectedApiKey))
+            {
+                throw new ArgumentException("Protected API key must be non-whitespace.", nameof(protectedApiKey));
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return WriteAtomicAsync(ProtectedApiKeyPath(), protectedApiKey, cancellationToken);
+        }
+
+        public async Task<string?> LoadProtectedApiKeyAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = ProtectedApiKeyPath();
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var protectedApiKey = await File.ReadAllTextAsync(path, Utf8WithoutBom, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(protectedApiKey))
+            {
+                throw new IOException("Protected API key storage is empty.");
+            }
+
+            return protectedApiKey;
+        }
+
         public async Task SaveBackupAsync(
             string programFingerprint,
             string xml,
@@ -178,6 +241,16 @@ namespace VizzyGPT.Core.Storage
         {
             ValidateFingerprint(programFingerprint);
             return ContainedPath("Pending", SanitizeFingerprint(programFingerprint) + ".json");
+        }
+
+        private string NonSecretSettingsPath()
+        {
+            return ContainedPath("Settings", "settings.json");
+        }
+
+        private string ProtectedApiKeyPath()
+        {
+            return ContainedPath("Settings", "api-key.protected");
         }
 
         private string ContainedPath(params string[] segments)

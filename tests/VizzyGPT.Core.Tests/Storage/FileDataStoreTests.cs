@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using VizzyGPT.Core.Changes;
+using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Patching;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Storage;
@@ -34,6 +35,61 @@ namespace VizzyGPT.Core.Tests.Storage
 
             Assert.That(await store.LoadPendingAsync(pending.ProgramFingerprint), Is.Null);
             Assert.That(Directory.GetFiles(temporary.Path, "*.json", SearchOption.AllDirectories), Is.Empty);
+        }
+
+        [Test]
+        public async Task Non_secret_settings_round_trip_atomically_without_serializing_an_api_key()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var first = new NonSecretSettings(
+                "https://api.example.test",
+                ApiMode.Auto,
+                "gpt-test",
+                30);
+            var replacement = new NonSecretSettings(
+                "http://127.0.0.1:8787",
+                ApiMode.ChatCompletions,
+                "local-model",
+                45);
+
+            await store.SaveNonSecretSettingsAsync(first);
+            await store.SaveNonSecretSettingsAsync(replacement);
+
+            var loaded = await store.LoadNonSecretSettingsAsync();
+            var settingsFiles = Directory.GetFiles(temporary.Path, "*.json", SearchOption.AllDirectories);
+
+            Assert.That(loaded, Is.Not.Null);
+            Assert.That(loaded!.BaseUrl, Is.EqualTo(replacement.BaseUrl));
+            Assert.That(loaded.Mode, Is.EqualTo(replacement.Mode));
+            Assert.That(loaded.Model, Is.EqualTo(replacement.Model));
+            Assert.That(loaded.TimeoutSeconds, Is.EqualTo(replacement.TimeoutSeconds));
+            Assert.That(settingsFiles, Has.Length.EqualTo(1));
+            Assert.That(File.ReadAllText(settingsFiles[0]), Does.Not.Contain("apiKey").IgnoreCase);
+            Assert.That(Directory.GetFiles(temporary.Path, "*.tmp", SearchOption.AllDirectories), Is.Empty);
+        }
+
+        [Test]
+        public async Task Protected_api_key_ciphertext_is_stored_separately_from_non_secret_settings()
+        {
+            using var temporary = new TemporaryDirectory();
+            IDataStore store = new FileDataStore(temporary.Path);
+            var settings = new NonSecretSettings(
+                "https://api.example.test",
+                ApiMode.Responses,
+                "gpt-test",
+                30);
+            const string protectedApiKey = "DPAPI-CIPHERTEXT-ONLY";
+
+            await store.SaveNonSecretSettingsAsync(settings);
+            await store.SaveProtectedApiKeyAsync(protectedApiKey);
+
+            var json = File.ReadAllText(Directory.GetFiles(temporary.Path, "*.json", SearchOption.AllDirectories).Single());
+            var loadedCiphertext = await store.LoadProtectedApiKeyAsync();
+
+            Assert.That(loadedCiphertext, Is.EqualTo(protectedApiKey));
+            Assert.That(json, Does.Not.Contain(protectedApiKey));
+            Assert.That(Directory.GetFiles(temporary.Path, "*.tmp", SearchOption.AllDirectories), Is.Empty);
         }
 
         [Test]

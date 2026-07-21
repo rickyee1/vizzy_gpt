@@ -7,6 +7,20 @@ namespace VizzyGPT.Core.Storage
 {
     public interface IDataStore
     {
+        Task SaveNonSecretSettingsAsync(
+            NonSecretSettings settings,
+            CancellationToken cancellationToken = default);
+
+        Task<NonSecretSettings?> LoadNonSecretSettingsAsync(
+            CancellationToken cancellationToken = default);
+
+        Task SaveProtectedApiKeyAsync(
+            string protectedApiKey,
+            CancellationToken cancellationToken = default);
+
+        Task<string?> LoadProtectedApiKeyAsync(
+            CancellationToken cancellationToken = default);
+
         Task SaveBackupAsync(
             string programFingerprint,
             string xml,

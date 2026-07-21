@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<XmlLayout xmlns="http://www.w3schools.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\..\..\..\ModTools\UI\XmlLayout.xsd">
+  <Include path="Ui/Xml/Styles.xml" />
+  <Panel id="preview-dialog" class="dialog-background">
+    <Panel class="panel border" width="680" height="560" padding="20">
+      <TextMeshPro text="Vizzy GPT Preview" class="header" rectAlignment="UpperLeft" />
+      <TextMeshPro id="summary-text" class="value" rectAlignment="UpperCenter" offsetXY="0 -44" />
+      <VerticalScrollView class="no-image" offsetMin="0 62" offsetMax="0 -80">
+        <VerticalLayout class="no-image" childForceExpandHeight="false" spacing="10">
+          <TextMeshPro text="Added" class="label" />
+          <TextMeshPro id="added-text" class="value" />
+          <TextMeshPro text="Changed" class="label" />
+          <TextMeshPro id="changed-text" class="value" />
+          <TextMeshPro text="Removed" class="label" />
+          <TextMeshPro id="removed-text" class="value" />
+          <TextMeshPro text="Warnings" class="label" />
+          <TextMeshPro id="warnings-text" class="value" />
+        </VerticalLayout>
+      </VerticalScrollView>
+      <Button id="cancel-button" class="btn" rectAlignment="LowerLeft" width="180" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
+      <Button id="apply-button" class="btn btn-primary" rectAlignment="LowerRight" width="180" onClick="OnApplyButtonClicked();"><TextMeshPro text="Apply" /></Button>
+    </Panel>
+  </Panel>
+</XmlLayout>
