@@ -21,6 +21,7 @@ namespace VizzyGPT.Runtime
     public sealed class VizzyGptBehaviour : MonoBehaviour
     {
         private const string VizzyToolboxResourcePath = "Ui/Xml/Vizzy/VizzyToolbox";
+        private const string PackagedVizzyToolboxResourcePath = "VizzyGPT/VizzyToolbox";
         private const string VizzyGptPanelResourcePath = "VizzyGPT/VizzyGptPanel";
         private const string PreviewDialogResourcePath = "VizzyGPT/PreviewDialog";
         private const string SettingsDialogResourcePath = "VizzyGPT/SettingsDialog";
@@ -134,6 +135,11 @@ namespace VizzyGPT.Runtime
         {
             var activeUserInterface = userInterface ?? throw new InvalidOperationException("The game UI is unavailable.");
             var toolbox = activeUserInterface.ResourceDatabase.GetResource<TextAsset>(VizzyToolboxResourcePath);
+            if (toolbox == null || string.IsNullOrWhiteSpace(toolbox.text))
+            {
+                toolbox = activeUserInterface.ResourceDatabase.GetResource<TextAsset>(PackagedVizzyToolboxResourcePath);
+            }
+
             if (toolbox == null || string.IsNullOrWhiteSpace(toolbox.text))
             {
                 throw new InvalidOperationException("The stock Vizzy toolbox resource is unavailable.");

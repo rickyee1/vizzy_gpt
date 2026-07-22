@@ -167,6 +167,26 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Modify_sends_the_current_program_hash_in_the_model_context()
+        {
+            AiRequest? sentRequest = null;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                sentRequest = request;
+                return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            var expectedHash = VizzyProgramHash.Compute(VizzyProgramDocument.Parse(InitialXml));
+            Assert.That(sentRequest, Is.Not.Null);
+            Assert.That(sentRequest!.Context, Does.Contain("Program base hash:\n" + expectedHash));
+        }
+
+        [Test]
         public void Modify_rejects_response_when_editor_changed_while_request_was_pending()
         {
             using var requestStarted = new ManualResetEventSlim();

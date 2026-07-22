@@ -91,6 +91,26 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Behaviour_falls_back_to_a_packaged_stock_toolbox_resource()
+        {
+            var toolboxPath = Path.Combine(
+                Application.dataPath,
+                "VizzyGPT",
+                "Runtime",
+                "Resources",
+                "Ui",
+                "VizzyToolbox.xml");
+            var databasePath = Path.Combine(Application.dataPath, "Content", "XML UI", "UIResourceDatabase.asset");
+            var behaviourPath = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "VizzyGptBehaviour.cs");
+
+            Assert.That(File.Exists(toolboxPath), Is.True, "The SDK-matched stock toolbox must be packaged as a fallback.");
+            Assert.That(File.ReadAllText(databasePath), Does.Contain("- path: VizzyGPT/VizzyToolbox"));
+            var source = File.ReadAllText(behaviourPath);
+            Assert.That(source, Does.Contain("Ui/Xml/Vizzy/VizzyToolbox"));
+            Assert.That(source, Does.Contain("VizzyGPT/VizzyToolbox"));
+        }
+
+        [Test]
         public void Panel_buttons_use_textmeshpro_children_not_legacy_text_attributes()
         {
             var resourcePath = Path.Combine(Application.dataPath, "VizzyGPT", "Runtime", "Resources", "Ui", "VizzyGptPanel.xml");
@@ -116,6 +136,25 @@ namespace VizzyGPT.Tests.EditMode
 
             AssertToggle(document, namespaceManager, "ask-toggle", "Ask", "OnAskModeClicked();");
             AssertToggle(document, namespaceManager, "modify-toggle", "Modify", "OnModifyModeClicked();");
+        }
+
+        [TestCase("VizzyGptPanel.xml", "prompt-input")]
+        [TestCase("SettingsDialog.xml", "base-url-input")]
+        [TestCase("SettingsDialog.xml", "api-mode-input")]
+        [TestCase("SettingsDialog.xml", "model-input")]
+        [TestCase("SettingsDialog.xml", "api-key-input")]
+        [TestCase("SettingsDialog.xml", "timeout-input")]
+        public void Input_fields_explicitly_use_visible_text(string resourceName, string inputId)
+        {
+            var document = LoadResource(resourceName);
+            var namespaceManager = new XmlNamespaceManager(document.NameTable);
+            namespaceManager.AddNamespace("ui", "http://www.w3schools.com");
+            var input = document.SelectSingleNode("//ui:TextMeshProInputField[@id='" + inputId + "']", namespaceManager);
+
+            Assert.That(input, Is.Not.Null, inputId);
+            var text = input!.SelectSingleNode("ui:TMP_Text", namespaceManager) as XmlElement;
+            Assert.That(text, Is.Not.Null, inputId + " must explicitly configure its runtime text component.");
+            Assert.That(text!.GetAttribute("color"), Is.EqualTo("White"), inputId);
         }
 
         [Test]

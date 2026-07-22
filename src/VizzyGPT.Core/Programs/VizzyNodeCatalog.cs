@@ -38,8 +38,22 @@ namespace VizzyGPT.Core.Programs
                 .Cast<string>();
             var elements = root.DescendantsAndSelf()
                 .Select(element => element.Name.LocalName);
-            var instructionElements = CategoryElements(root, "Instructions");
-            var expressionElements = CategoryElements(root, "Expressions");
+            var styleColors = root.Elements("Styles")
+                .SelectMany(container => container.Elements("Style"))
+                .Where(style => style.Attribute("id") != null && style.Attribute("color") != null)
+                .GroupBy(style => style.Attribute("id")!.Value, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First().Attribute("color")!.Value,
+                    StringComparer.Ordinal);
+            var stockNodes = root.Elements("Categories")
+                .SelectMany(container => container.Elements("Category"))
+                .SelectMany(category => category.Elements())
+                .ToArray();
+            var instructionElements = CategoryElements(root, "Instructions")
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor));
+            var expressionElements = CategoryElements(root, "Expressions")
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor));
 
             return new VizzyNodeCatalog(
                 new ImmutableOrdinalStringSet(styles),
@@ -76,6 +90,37 @@ namespace VizzyGPT.Core.Programs
                     string.Equals(element.Name.LocalName, categoryName, StringComparison.Ordinal))
                 .SelectMany(category => category.Elements())
                 .Select(element => element.Name.LocalName);
+        }
+
+        private static IEnumerable<string> StockCategoryElements(
+            IEnumerable<XElement> nodes,
+            IReadOnlyDictionary<string, string> styleColors,
+            Func<string, bool> acceptsColor)
+        {
+            return nodes
+                .Where(node =>
+                {
+                    var style = node.Attribute("style")?.Value;
+                    return style != null &&
+                        styleColors.TryGetValue(style, out var color) &&
+                        acceptsColor(color);
+                })
+                .Select(node => node.Name.LocalName);
+        }
+
+        private static bool IsInstructionColor(string color)
+        {
+            return string.Equals(color, "Instruction", StringComparison.Ordinal) ||
+                string.Equals(color, "InstructionBlock", StringComparison.Ordinal) ||
+                string.Equals(color, "CraftInstruction", StringComparison.Ordinal) ||
+                string.Equals(color, "Event", StringComparison.Ordinal) ||
+                string.Equals(color, "CustomInstruction", StringComparison.Ordinal) ||
+                string.Equals(color, "WidgetInstruction", StringComparison.Ordinal);
+        }
+
+        private static bool IsExpressionColor(string color)
+        {
+            return !IsInstructionColor(color);
         }
 
         private sealed class ImmutableOrdinalStringSet

@@ -373,12 +373,14 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var document = VizzyProgramDocument.Parse(xml);
+            var baseHash = VizzyProgramHash.Compute(document);
             return new RequestContext(
+                "Program base hash:\n" + baseHash + "\n" +
                 new ContextBuilder().BuildEditorContext(document, string.Empty, null),
                 VizzyGptPanelMode.Modify,
                 xml,
                 document,
-                VizzyProgramHash.Compute(document));
+                baseHash);
         }
 
         private bool TryCreateSession(

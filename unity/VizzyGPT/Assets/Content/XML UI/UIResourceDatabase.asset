@@ -24,5 +24,7 @@ MonoBehaviour:
     resource: {fileID: 4900000, guid: 56c2f77f8adaa1048aa5e8d05f87653a, type: 3}
   - path: VizzyGPT/SettingsDialog
     resource: {fileID: 4900000, guid: c430157d929be5a4eb22b5fc340c018b, type: 3}
+  - path: VizzyGPT/VizzyToolbox
+    resource: {fileID: 4900000, guid: 9a14257bcb0e4bdc8b91fc19a43ad53e, type: 3}
   - path: VizzyGPT/UIResourceDatabase
     resource: {fileID: 11400000}

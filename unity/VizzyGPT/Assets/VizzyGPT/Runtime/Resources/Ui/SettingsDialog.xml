@@ -5,11 +5,11 @@
     <Panel id="settings-dialog-content" class="panel border" width="600" height="520">
       <TextMeshPro id="settings-title" text="Vizzy GPT Settings" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -52" offsetMax="400 -20" />
       <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="12" anchorMin="0 0" anchorMax="1 1" offsetMin="20 75" offsetMax="-20 -70">
-        <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine" />
-        <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine" />
-        <TextMeshPro text="Model" class="label" /><TextMeshProInputField id="model-input" lineType="SingleLine" />
-        <TextMeshPro text="API key" class="label" /><TextMeshProInputField id="api-key-input" lineType="SingleLine" contentType="Password" />
-        <TextMeshPro text="Timeout seconds" class="label" /><TextMeshProInputField id="timeout-input" lineType="SingleLine" contentType="IntegerNumber" />
+        <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="Model" class="label" /><TextMeshProInputField id="model-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="API key" class="label" /><TextMeshProInputField id="api-key-input" lineType="SingleLine" contentType="Password"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="Timeout seconds" class="label" /><TextMeshProInputField id="timeout-input" lineType="SingleLine" contentType="IntegerNumber"><TMP_Text color="White" /></TextMeshProInputField>
         <TextMeshPro id="destination-host-text" class="value" />
         <TextMeshPro id="connection-status-text" class="label" />
       </VerticalLayout>

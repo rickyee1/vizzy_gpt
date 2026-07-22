@@ -22,7 +22,9 @@
     </VerticalScrollView>
     <TextMeshPro id="status-text" class="label" anchorMin="0 0" anchorMax="0 0" pivot="0 0" offsetMin="12 144" offsetMax="312 168" />
     <Image id="pending-indicator" color="Primary" anchorMin="0 0" anchorMax="0 0" pivot="0 0" offsetMin="326 150" offsetMax="336 160" active="false" />
-    <TextMeshProInputField id="prompt-input" lineType="MultiLineNewline" rectAlignment="LowerCenter" height="74" width="396" offsetXY="0 60" />
+    <TextMeshProInputField id="prompt-input" lineType="MultiLineNewline" rectAlignment="LowerCenter" height="74" width="396" offsetXY="0 60">
+      <TMP_Text color="White" />
+    </TextMeshProInputField>
     <Button id="undo-button" class="icon-button" rectAlignment="LowerLeft" offsetXY="12 12" icon="Ui/Sprites/Design/IconButtonUndo" onClick="OnUndoButtonClicked();" tooltip="Undo last GPT apply" tooltipPosition="Above" />
     <Button id="preview-button" class="btn" rectAlignment="LowerRight" width="86" offsetXY="-138 12" onClick="OnPreviewButtonClicked();"><TextMeshPro text="Preview" /></Button>
     <Button id="send-button" class="icon-button" rectAlignment="LowerRight" icon="Ui/Sprites/Design/IconButtonPlay" offsetXY="-64 12" onClick="OnSendButtonClicked();" tooltip="Send" tooltipPosition="Above" />

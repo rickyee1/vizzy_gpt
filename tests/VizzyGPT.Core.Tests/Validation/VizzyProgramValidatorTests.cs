@@ -139,6 +139,27 @@ namespace VizzyGPT.Core.Tests.Validation
         }
 
         [Test]
+        public void Validate_accepts_nested_instructions_with_a_stock_shaped_toolbox_catalog()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions>" +
+                "<Event id='1' event='FlightStart' style='flight-start'>" +
+                "<Instructions><LogMessage id='2' style='log' /></Instructions>" +
+                "</Event></Instructions><Expressions /></Program>");
+            var catalog = VizzyNodeCatalog.FromToolboxXml(
+                "<VizzyToolbox>" +
+                "<Colors><Color id='Event' /><Color id='Instruction' /></Colors>" +
+                "<Styles><Style id='flight-start' color='Event' /><Style id='log' color='Instruction' /></Styles>" +
+                "<Categories><Category name='Events'><Event style='flight-start' /></Category>" +
+                "<Category name='Program Flow'><LogMessage style='log' /></Category></Categories>" +
+                "</VizzyToolbox>");
+
+            var report = Validator().Validate(document, catalog);
+
+            Assert.That(report.IsValid, Is.True, string.Join("\n", report.Errors.Select(issue => issue.Message)));
+        }
+
+        [Test]
         public void Validate_passes_canonical_xml_to_a_successful_runtime_serializer_callback()
         {
             string? serializedXml = null;

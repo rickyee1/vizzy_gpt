@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security;
 using System.Threading.Tasks;
 using ModApi.Ui;
 using TMPro;
@@ -119,7 +118,8 @@ namespace VizzyGPT.Runtime.Ui
         {
             if (target != null)
             {
-                target.text = SecurityElement.Escape(value ?? string.Empty) ?? string.Empty;
+                target.richText = false;
+                target.text = value ?? string.Empty;
             }
         }
 
@@ -127,7 +127,8 @@ namespace VizzyGPT.Runtime.Ui
         {
             if (target != null)
             {
-                target.text = string.Join("\n", values.Select(value => SecurityElement.Escape(value ?? string.Empty) ?? string.Empty));
+                target.richText = false;
+                target.text = string.Join("\n", values.Select(value => value ?? string.Empty));
             }
         }
 
