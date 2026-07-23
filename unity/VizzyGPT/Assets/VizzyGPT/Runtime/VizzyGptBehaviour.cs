@@ -148,7 +148,10 @@ namespace VizzyGPT.Runtime
                 CreateVizzyCatalog,
                 () => DateTime.UtcNow,
                 panel.Render,
-                environment);
+                environment,
+                environment.IsFlight
+                    ? RuntimeCompatibilityResult.Compatible("Flight.Craft.FlightProgram")
+                    : adapter.Compatibility);
             panel.Configure(workflow, OpenSettingsDialog, OpenPreviewDialog);
             panel.Bind(layoutController.XmlLayout);
             if (!environment.IsFlight)

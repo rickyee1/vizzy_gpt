@@ -17,10 +17,20 @@ namespace VizzyGPT.Runtime.Adapters
         private readonly ProgramSerializer serializer = new ProgramSerializer();
         private readonly RuntimeContractProbe probe = new RuntimeContractProbe(ResolvePrivateRefreshContract);
         private RuntimeContract editorContract;
+        private RuntimeCompatibilityResult editorCompatibility;
 
         public bool IsEditorAvailable => GetEditorContract() != null;
 
         public bool IsFlightAvailable => TryGetFlightProgram(out _, out _);
+
+        public RuntimeCompatibilityResult Compatibility
+        {
+            get
+            {
+                GetEditorContract();
+                return editorCompatibility ?? RuntimeCompatibilityResult.EditorUnavailable();
+            }
+        }
 
         public bool TryGetEditorProgramXml(out string xml, out string error)
         {
@@ -152,7 +162,7 @@ namespace VizzyGPT.Runtime.Adapters
         {
             if (editorContract == null || editorContract.Instance == null)
             {
-                editorContract = probe.ProbeEditor();
+                editorContract = probe.ProbeEditor(out editorCompatibility);
             }
 
             return editorContract;

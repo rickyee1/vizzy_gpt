@@ -55,7 +55,7 @@ namespace VizzyGPT.Runtime.Adapters
                 throw new ArgumentNullException(nameof(privateRefreshContractResolver));
         }
 
-        internal RuntimeContract ProbeEditor()
+        internal RuntimeContract ProbeEditor(out RuntimeCompatibilityResult compatibility)
         {
             var candidates = new List<RuntimeContract>();
 
@@ -78,17 +78,31 @@ namespace VizzyGPT.Runtime.Adapters
                 }
             }
 
-            if (candidates.Count != 1)
+            if (candidates.Count == 0)
             {
+                compatibility = RuntimeCompatibilityResult.EditorUnavailable();
+                return null;
+            }
+
+            if (candidates.Count > 1)
+            {
+                compatibility = RuntimeCompatibilityResult.AmbiguousContract(
+                    candidates.Select(Summarize).ToArray());
                 return null;
             }
 
             var contract = candidates[0];
+            compatibility = RuntimeCompatibilityResult.Compatible(Summarize(contract));
             Debug.LogFormat(
                 "VizzyGPT resolved Vizzy runtime contract: {0}.{1}",
                 contract.Instance.GetType().FullName,
                 contract.FlightProgramMember.Name);
             return contract;
+        }
+
+        private static string Summarize(RuntimeContract contract)
+        {
+            return contract.Instance.GetType().FullName + "." + contract.FlightProgramMember.Name;
         }
 
         internal bool TryFindFlightProgramFallback(out UnityEngine.Object instance, out MemberInfo member)

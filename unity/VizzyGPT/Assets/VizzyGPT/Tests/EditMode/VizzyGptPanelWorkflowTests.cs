@@ -37,6 +37,27 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Editor_ask_includes_the_active_program_without_enabling_mutation()
+        {
+            AiRequest? sentRequest = null;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                sentRequest = request;
+                return Task.FromResult(new AiResponse("Explanation.", null, false, Array.Empty<string>()));
+            });
+
+            workflow.OpenPanel();
+            workflow.SendPromptAsync("Explain this program.").GetAwaiter().GetResult();
+
+            Assert.That(sentRequest, Is.Not.Null);
+            Assert.That(sentRequest!.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
+            Assert.That(sentRequest.Context, Does.Contain("Ask mode does not permit program mutation."));
+            Assert.That(workflow.CanApply, Is.False);
+            Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
         public void Render_state_centrally_controls_pending_actions()
         {
             VizzyGptPanelRenderState? rendered = null;

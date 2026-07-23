@@ -156,7 +156,8 @@ namespace VizzyGPT.Runtime.Ui
             bool canSend,
             bool canCancel,
             bool canPreview,
-            bool canUndo)
+            bool canUndo,
+            bool canModify)
         {
             Mode = mode;
             State = state;
@@ -166,6 +167,7 @@ namespace VizzyGPT.Runtime.Ui
             CanCancel = canCancel;
             CanPreview = canPreview;
             CanUndo = canUndo;
+            CanModify = canModify;
         }
 
         public VizzyGptPanelMode Mode { get; }
@@ -176,6 +178,7 @@ namespace VizzyGPT.Runtime.Ui
         public bool CanCancel { get; }
         public bool CanPreview { get; }
         public bool CanUndo { get; }
+        public bool CanModify { get; }
     }
 
     public sealed class VizzyGptPanelWorkflow : IDisposable
@@ -188,6 +191,7 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Func<DateTime> utcNow;
         private readonly Action<VizzyGptPanelRenderState> render;
         private readonly VizzyGptWorkflowEnvironment environment;
+        private readonly RuntimeCompatibilityResult compatibility;
 
         private CancellationTokenSource? requestCancellation;
         private ChangeSession? session;
@@ -205,7 +209,8 @@ namespace VizzyGPT.Runtime.Ui
             Func<VizzyNodeCatalog> createCatalog,
             Func<DateTime> utcNow,
             Action<VizzyGptPanelRenderState> render,
-            VizzyGptWorkflowEnvironment? environment = null)
+            VizzyGptWorkflowEnvironment? environment = null,
+            RuntimeCompatibilityResult? compatibility = null)
         {
             this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             this.sendAsync = sendAsync ?? throw new ArgumentNullException(nameof(sendAsync));
@@ -215,6 +220,8 @@ namespace VizzyGPT.Runtime.Ui
             this.utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
             this.render = render ?? throw new ArgumentNullException(nameof(render));
             this.environment = environment ?? VizzyGptWorkflowEnvironment.CreateDefault();
+            this.compatibility = compatibility ??
+                RuntimeCompatibilityResult.Compatible("Injected.Vizzy.FlightProgram");
             RenderState();
         }
 
@@ -226,7 +233,11 @@ namespace VizzyGPT.Runtime.Ui
 
         public string TranscriptText { get; private set; } = string.Empty;
 
-        public bool CanApply => State == VizzyGptPanelState.PreviewReady && session != null && IsSessionCurrent();
+        public bool CanApply =>
+            compatibility.CanModify &&
+            State == VizzyGptPanelState.PreviewReady &&
+            session != null &&
+            IsSessionCurrent();
 
         public bool CanUndo => undoSession != null && State != VizzyGptPanelState.Sending && State != VizzyGptPanelState.Applying;
 
@@ -241,7 +252,11 @@ namespace VizzyGPT.Runtime.Ui
             {
                 Transition(
                     session != null ? VizzyGptPanelState.PreviewReady : VizzyGptPanelState.Idle,
-                    session != null ? "Pending flight preview ready." : "Ready.");
+                    !compatibility.CanModify
+                        ? compatibility.Diagnostic
+                        : session != null
+                            ? "Pending flight preview ready."
+                            : "Ready.");
             }
         }
 
@@ -267,6 +282,14 @@ namespace VizzyGPT.Runtime.Ui
             if (!Enum.IsDefined(typeof(VizzyGptPanelMode), mode))
             {
                 throw new ArgumentOutOfRangeException(nameof(mode));
+            }
+
+            if (mode == VizzyGptPanelMode.Modify && !compatibility.CanModify)
+            {
+                Mode = VizzyGptPanelMode.Ask;
+                session = null;
+                Transition(VizzyGptPanelState.Idle, compatibility.Diagnostic);
+                return;
             }
 
             if (State == VizzyGptPanelState.Sending || State == VizzyGptPanelState.Applying)
@@ -388,6 +411,12 @@ namespace VizzyGPT.Runtime.Ui
             ThrowIfDisposed();
             if (environment.IsFlight)
             {
+                return;
+            }
+
+            if (!compatibility.CanModify)
+            {
+                Transition(VizzyGptPanelState.Idle, compatibility.Diagnostic);
                 return;
             }
 
@@ -604,10 +633,14 @@ namespace VizzyGPT.Runtime.Ui
         {
             if (Mode == VizzyGptPanelMode.Ask)
             {
+                var context = BuildReadOnlyProgramContext();
+                if (environment.IsFlight)
+                {
+                    context += "\n" + environment.BuildFlightContext();
+                }
+
                 return new RequestContext(
-                    environment.IsFlight
-                        ? environment.BuildFlightContext() + "\nAsk mode does not permit program mutation."
-                        : "EDITOR CONTEXT\nAsk mode does not permit program mutation.",
+                    context + "\nAsk mode does not permit program mutation.",
                     VizzyGptPanelMode.Ask,
                     null,
                     null,
@@ -632,6 +665,29 @@ namespace VizzyGPT.Runtime.Ui
                 xml,
                 document,
                 baseHash);
+        }
+
+        private string BuildReadOnlyProgramContext()
+        {
+            var read = environment.IsFlight
+                ? TryGetFlightSnapshot(out var xml, out _)
+                : adapter.TryGetEditorProgramXml(out xml, out _);
+            if (!read || string.IsNullOrWhiteSpace(xml))
+            {
+                return environment.IsFlight ? "FLIGHT PROGRAM CONTEXT\nUnavailable." : "EDITOR CONTEXT\nUnavailable.";
+            }
+
+            try
+            {
+                return new ContextBuilder().BuildEditorContext(
+                    VizzyProgramDocument.Parse(xml),
+                    string.Empty,
+                    null);
+            }
+            catch (Exception)
+            {
+                return environment.IsFlight ? "FLIGHT PROGRAM CONTEXT\nUnavailable." : "EDITOR CONTEXT\nUnavailable.";
+            }
         }
 
         private bool TryCreateSession(
@@ -754,7 +810,8 @@ namespace VizzyGPT.Runtime.Ui
                 State != VizzyGptPanelState.Closed && !isBusy,
                 State == VizzyGptPanelState.Sending || pendingConflict,
                 CanApply,
-                CanUndo);
+                CanUndo,
+                compatibility.CanModify);
         }
 
         private string ProgramFingerprint(string hash)
@@ -1007,6 +1064,7 @@ namespace VizzyGPT.Runtime.Ui
 
             if (previewButton != null)
             {
+                previewButton.gameObject.SetActive(state.CanModify);
                 previewButton.interactable = state.CanPreview;
             }
 
@@ -1021,7 +1079,11 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             askToggle?.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Ask);
-            modifyToggle?.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Modify);
+            if (modifyToggle != null)
+            {
+                modifyToggle.gameObject.SetActive(state.CanModify);
+                modifyToggle.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Modify);
+            }
         }
 
         private void OnPromptValueChanged(string value)

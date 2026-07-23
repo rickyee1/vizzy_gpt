@@ -48,6 +48,32 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Flight_ask_includes_launch_program_and_bounded_flight_context()
+        {
+            AiRequest? observed = null;
+            var environment = FlightEnvironment(
+                (_, __) => Task.FromResult<PendingChange?>(null),
+                (_, __) => Task.CompletedTask);
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(BaseXml, false, true),
+                environment,
+                (request, _) =>
+                {
+                    observed = request;
+                    return Task.FromResult(new AiResponse("Analysis.", null, false, Array.Empty<string>()));
+                });
+
+            workflow.OpenPanel();
+            workflow.SendPromptAsync("Explain the flight behavior.").GetAwaiter().GetResult();
+
+            Assert.That(observed, Is.Not.Null);
+            Assert.That(observed!.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
+            Assert.That(observed.Context, Does.Contain("FLIGHT CONTEXT"));
+            Assert.That(observed.Context, Does.Contain("Ask mode does not permit program mutation."));
+            Assert.That(workflow.CanApply, Is.False);
+        }
+
+        [Test]
         public void Existing_flight_pending_is_not_replaced_before_an_explicit_preview_apply()
         {
             var existing = CreatePending(BaseXml, AddVariablePatch(BaseXml), "craft-alpha");
