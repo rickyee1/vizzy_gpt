@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -145,6 +146,89 @@ namespace VizzyGPT.Runtime.Adapters
 
             member = null;
             return false;
+        }
+
+        public static bool TryFindFlightProgramOnCraft(object craftScript, out FlightProgram program)
+        {
+            program = null;
+            if (craftScript == null)
+            {
+                Debug.LogWarning("VizzyGPT flight program probe: active craft script is null.");
+                return false;
+            }
+
+            var scriptsProperty = craftScript.GetType().GetProperty("FlightProgramScripts", PublicInstance);
+            if (!(scriptsProperty?.GetValue(craftScript, null) is IEnumerable scripts))
+            {
+                Debug.LogWarningFormat(
+                    "VizzyGPT flight program probe: {0} has no enumerable FlightProgramScripts property.",
+                    craftScript.GetType().FullName);
+                return false;
+            }
+
+            var activeCommandPod = craftScript.GetType()
+                .GetProperty("ActiveCommandPod", PublicInstance)
+                ?.GetValue(craftScript, null);
+            var activePart = activeCommandPod?.GetType()
+                .GetProperty("Part", PublicInstance)
+                ?.GetValue(activeCommandPod, null);
+            var candidates = new List<(FlightProgram Program, object Part)>();
+            var scriptCount = 0;
+            foreach (var script in scripts)
+            {
+                scriptCount++;
+                if (script == null || !TryFindFlightProgramMember(script.GetType(), out var member))
+                {
+                    Debug.LogWarningFormat(
+                        "VizzyGPT flight program probe: entry {0} has no public FlightProgram member.",
+                        script?.GetType().FullName ?? "<null>");
+                    continue;
+                }
+
+                var value = member is PropertyInfo property
+                    ? property.GetValue(script, null)
+                    : ((FieldInfo)member).GetValue(script);
+                if (value is FlightProgram candidate)
+                {
+                    var partScript = script.GetType()
+                        .GetProperty("PartScript", PublicInstance)
+                        ?.GetValue(script, null);
+                    var part = partScript?.GetType()
+                        .GetProperty("Data", PublicInstance)
+                        ?.GetValue(partScript, null);
+                    candidates.Add((candidate, part));
+                }
+                else
+                {
+                    Debug.LogWarningFormat(
+                        "VizzyGPT flight program probe: {0}.{1} returned {2}.",
+                        script.GetType().FullName,
+                        member.Name,
+                        value?.GetType().FullName ?? "null");
+                }
+            }
+
+            var activeCandidates = candidates
+                .Where(candidate => activePart != null && ReferenceEquals(candidate.Part, activePart))
+                .ToArray();
+            if (activeCandidates.Length == 1)
+            {
+                program = activeCandidates[0].Program;
+                return true;
+            }
+
+            if (candidates.Count != 1)
+            {
+                Debug.LogWarningFormat(
+                    "VizzyGPT flight program probe: craft type {0}, script entries {1}, valid programs {2}.",
+                    craftScript.GetType().FullName,
+                    scriptCount,
+                    candidates.Count);
+                return false;
+            }
+
+            program = candidates[0].Program;
+            return true;
         }
 
         private static IEnumerable<Type> GetLoadedTypes()

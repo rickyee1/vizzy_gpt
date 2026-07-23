@@ -178,6 +178,38 @@ namespace VizzyGPT.Core.Storage
             return pending;
         }
 
+        public async Task<PendingChange?> LoadOnlyPendingAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var directory = ContainedPath("Pending");
+            if (!Directory.Exists(directory))
+            {
+                return null;
+            }
+
+            var files = Directory.GetFiles(directory, "*.json", SearchOption.TopDirectoryOnly);
+            if (files.Length != 1)
+            {
+                return null;
+            }
+
+            var json = await File.ReadAllTextAsync(files[0], Utf8WithoutBom, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var pending = JsonConvert.DeserializeObject<PendingChange>(json, JsonSettings)
+                ?? throw new JsonSerializationException("Pending change JSON deserialized to null.");
+            if (!string.Equals(
+                    Path.GetFullPath(files[0]),
+                    Path.GetFullPath(PendingPath(pending.ProgramFingerprint)),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new JsonSerializationException(
+                    "Pending change programFingerprint does not match its file name.");
+            }
+
+            return pending;
+        }
+
         public Task DeletePendingAsync(
             string programFingerprint,
             CancellationToken cancellationToken = default)

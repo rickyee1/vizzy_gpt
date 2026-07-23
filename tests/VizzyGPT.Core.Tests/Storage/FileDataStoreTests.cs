@@ -38,6 +38,20 @@ namespace VizzyGPT.Core.Tests.Storage
         }
 
         [Test]
+        public async Task Only_pending_change_is_available_as_a_safe_fallback_but_multiple_are_ambiguous()
+        {
+            using var temporary = new TemporaryDirectory();
+            var store = new FileDataStore(temporary.Path);
+            var first = CreatePending("program-first", "first");
+            await store.SavePendingAsync(first);
+
+            AssertPendingEquivalent(await store.LoadOnlyPendingAsync(), first);
+
+            await store.SavePendingAsync(CreatePending("program-second", "second"));
+            Assert.That(await store.LoadOnlyPendingAsync(), Is.Null);
+        }
+
+        [Test]
         public async Task Non_secret_settings_round_trip_atomically_without_serializing_an_api_key()
         {
             using var temporary = new TemporaryDirectory();

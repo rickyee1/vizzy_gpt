@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.Generic;
 using System.Xml.Linq;
 using ModApi.Craft.Program;
 using NUnit.Framework;
@@ -61,12 +62,81 @@ namespace VizzyGPT.Tests.EditMode
             }
         }
 
+        [Test]
+        public void Active_flight_craft_resolves_its_flight_program_script()
+        {
+            var inactive = new ProgramSerializer().DeserializeFlightProgram(
+                XElement.Parse(File.ReadAllText(FixturePath)));
+            var expected = new ProgramSerializer().DeserializeFlightProgram(
+                XElement.Parse(File.ReadAllText(FixturePath)));
+            var inactivePart = new object();
+            var activePart = new object();
+            var craft = new FlightCraftContract(
+                new[]
+                {
+                    new FlightProgramContract(inactive, inactivePart),
+                    new FlightProgramContract(expected, activePart)
+                },
+                activePart);
+
+            var found = RuntimeContractProbe.TryFindFlightProgramOnCraft(craft, out var actual);
+
+            Assert.That(found, Is.True);
+            Assert.That(actual, Is.SameAs(expected));
+        }
+
         private static string FixturePath => Path.Combine(
             Application.dataPath,
             "VizzyGPT",
             "Tests",
             "Fixtures",
             "minimal.xml");
+    }
+
+    public sealed class FlightCraftContract
+    {
+        public FlightCraftContract(IReadOnlyList<FlightProgramContract> scripts, object activePart)
+        {
+            FlightProgramScripts = scripts;
+            ActiveCommandPod = new CommandPodContract(activePart);
+        }
+
+        public IReadOnlyList<FlightProgramContract> FlightProgramScripts { get; }
+
+        public CommandPodContract ActiveCommandPod { get; }
+    }
+
+    public sealed class FlightProgramContract
+    {
+        public FlightProgramContract(FlightProgram flightProgram, object part)
+        {
+            FlightProgram = flightProgram;
+            PartScript = new PartScriptContract(part);
+        }
+
+        public FlightProgram FlightProgram { get; }
+
+        public PartScriptContract PartScript { get; }
+    }
+
+    public sealed class PartScriptContract
+    {
+        public PartScriptContract(object data)
+        {
+            Data = data;
+        }
+
+        public object Data { get; }
+    }
+
+    public sealed class CommandPodContract
+    {
+        public CommandPodContract(object part)
+        {
+            Part = part;
+        }
+
+        public object Part { get; }
     }
 
     public sealed class IncompleteVizzyEditor : MonoBehaviour

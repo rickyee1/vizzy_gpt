@@ -17,6 +17,119 @@ using VizzyGPT.Runtime.Adapters;
 
 namespace VizzyGPT.Runtime.Ui
 {
+    public sealed class VizzyGptWorkflowEnvironment
+    {
+        private readonly Func<string, string> programFingerprint;
+        private readonly Func<string?> launchProgramXml;
+        private string? resolvedLaunchProgramXml;
+
+        public VizzyGptWorkflowEnvironment(
+            bool isFlight,
+            string programFingerprint,
+            string? launchProgramXml,
+            Func<string> buildFlightContext,
+            Func<string, CancellationToken, Task<PendingChange?>> loadPendingAsync,
+            Func<PendingChange, CancellationToken, Task> savePendingAsync,
+            Func<string, CancellationToken, Task> deletePendingAsync)
+            : this(
+                isFlight,
+                _ => programFingerprint,
+                () => launchProgramXml,
+                buildFlightContext,
+                loadPendingAsync,
+                savePendingAsync,
+                deletePendingAsync)
+        {
+            if (string.IsNullOrWhiteSpace(programFingerprint))
+            {
+                throw new ArgumentException("Program fingerprint must be non-whitespace.", nameof(programFingerprint));
+            }
+        }
+
+        public VizzyGptWorkflowEnvironment(
+            bool isFlight,
+            string programFingerprint,
+            Func<string?> launchProgramXml,
+            Func<string> buildFlightContext,
+            Func<string, CancellationToken, Task<PendingChange?>> loadPendingAsync,
+            Func<PendingChange, CancellationToken, Task> savePendingAsync,
+            Func<string, CancellationToken, Task> deletePendingAsync)
+            : this(
+                isFlight,
+                _ => programFingerprint,
+                launchProgramXml,
+                buildFlightContext,
+                loadPendingAsync,
+                savePendingAsync,
+                deletePendingAsync)
+        {
+            if (string.IsNullOrWhiteSpace(programFingerprint))
+            {
+                throw new ArgumentException("Program fingerprint must be non-whitespace.", nameof(programFingerprint));
+            }
+        }
+
+        internal VizzyGptWorkflowEnvironment(
+            bool isFlight,
+            Func<string, string> programFingerprint,
+            Func<string?> launchProgramXml,
+            Func<string> buildFlightContext,
+            Func<string, CancellationToken, Task<PendingChange?>> loadPendingAsync,
+            Func<PendingChange, CancellationToken, Task> savePendingAsync,
+            Func<string, CancellationToken, Task> deletePendingAsync)
+        {
+            IsFlight = isFlight;
+            this.programFingerprint = programFingerprint ?? throw new ArgumentNullException(nameof(programFingerprint));
+            this.launchProgramXml = launchProgramXml ?? throw new ArgumentNullException(nameof(launchProgramXml));
+            BuildFlightContext = buildFlightContext ?? throw new ArgumentNullException(nameof(buildFlightContext));
+            LoadPendingAsync = loadPendingAsync ?? throw new ArgumentNullException(nameof(loadPendingAsync));
+            SavePendingAsync = savePendingAsync ?? throw new ArgumentNullException(nameof(savePendingAsync));
+            DeletePendingAsync = deletePendingAsync ?? throw new ArgumentNullException(nameof(deletePendingAsync));
+        }
+
+        public bool IsFlight { get; }
+        public Func<string> BuildFlightContext { get; }
+        public Func<string, CancellationToken, Task<PendingChange?>> LoadPendingAsync { get; }
+        public Func<PendingChange, CancellationToken, Task> SavePendingAsync { get; }
+        public Func<string, CancellationToken, Task> DeletePendingAsync { get; }
+
+        public string GetProgramFingerprint(string programHash)
+        {
+            var value = programFingerprint(programHash);
+            return string.IsNullOrWhiteSpace(value)
+                ? throw new InvalidOperationException("Program fingerprint resolver returned an empty value.")
+                : value;
+        }
+
+        public string? ResolveLaunchProgramXml()
+        {
+            if (!string.IsNullOrWhiteSpace(resolvedLaunchProgramXml))
+            {
+                return resolvedLaunchProgramXml;
+            }
+
+            var value = launchProgramXml();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                resolvedLaunchProgramXml = value;
+            }
+
+            return value;
+        }
+
+        internal static VizzyGptWorkflowEnvironment CreateDefault()
+        {
+            return new VizzyGptWorkflowEnvironment(
+                false,
+                hash => "editor-" + hash,
+                () => null,
+                () => string.Empty,
+                (_, __) => Task.FromResult<PendingChange?>(null),
+                (_, __) => Task.CompletedTask,
+                (_, __) => Task.CompletedTask);
+        }
+    }
+
     public enum VizzyGptPanelMode
     {
         Ask,
@@ -74,12 +187,15 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Func<VizzyNodeCatalog> createCatalog;
         private readonly Func<DateTime> utcNow;
         private readonly Action<VizzyGptPanelRenderState> render;
+        private readonly VizzyGptWorkflowEnvironment environment;
 
         private CancellationTokenSource? requestCancellation;
         private ChangeSession? session;
         private AppliedChange? undoSession;
         private long requestGeneration;
         private bool disposed;
+        private bool pendingConflict;
+        private string? restoredPendingFingerprint;
 
         public VizzyGptPanelWorkflow(
             IVizzyRuntimeAdapter adapter,
@@ -88,7 +204,8 @@ namespace VizzyGPT.Runtime.Ui
             Func<string, string, DateTime, CancellationToken, Task> saveBackupAsync,
             Func<VizzyNodeCatalog> createCatalog,
             Func<DateTime> utcNow,
-            Action<VizzyGptPanelRenderState> render)
+            Action<VizzyGptPanelRenderState> render,
+            VizzyGptWorkflowEnvironment? environment = null)
         {
             this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             this.sendAsync = sendAsync ?? throw new ArgumentNullException(nameof(sendAsync));
@@ -97,6 +214,7 @@ namespace VizzyGPT.Runtime.Ui
             this.createCatalog = createCatalog ?? throw new ArgumentNullException(nameof(createCatalog));
             this.utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
             this.render = render ?? throw new ArgumentNullException(nameof(render));
+            this.environment = environment ?? VizzyGptWorkflowEnvironment.CreateDefault();
             RenderState();
         }
 
@@ -112,6 +230,8 @@ namespace VizzyGPT.Runtime.Ui
 
         public bool CanUndo => undoSession != null && State != VizzyGptPanelState.Sending && State != VizzyGptPanelState.Applying;
 
+        public bool HasPendingConflict => pendingConflict;
+
         public VizzyGptPanelRenderState CurrentRenderState => CreateRenderState();
 
         public void OpenPanel()
@@ -119,7 +239,9 @@ namespace VizzyGPT.Runtime.Ui
             ThrowIfDisposed();
             if (State == VizzyGptPanelState.Closed)
             {
-                Transition(VizzyGptPanelState.Idle, "Ready.");
+                Transition(
+                    session != null ? VizzyGptPanelState.PreviewReady : VizzyGptPanelState.Idle,
+                    session != null ? "Pending flight preview ready." : "Ready.");
             }
         }
 
@@ -132,7 +254,10 @@ namespace VizzyGPT.Runtime.Ui
 
             CancelRequest();
             requestGeneration++;
-            session = null;
+            if (restoredPendingFingerprint == null)
+            {
+                session = null;
+            }
             Transition(VizzyGptPanelState.Closed, string.Empty);
         }
 
@@ -146,6 +271,12 @@ namespace VizzyGPT.Runtime.Ui
 
             if (State == VizzyGptPanelState.Sending || State == VizzyGptPanelState.Applying)
             {
+                return;
+            }
+
+            if (Mode == mode)
+            {
+                RenderState();
                 return;
             }
 
@@ -175,6 +306,7 @@ namespace VizzyGPT.Runtime.Ui
             CancelRequest();
             var generation = ++requestGeneration;
             session = null;
+            pendingConflict = false;
             var cancellation = new CancellationTokenSource();
             requestCancellation = cancellation;
             var cancellationToken = cancellation.Token;
@@ -206,7 +338,20 @@ namespace VizzyGPT.Runtime.Ui
                 }
 
                 session = createdSession;
-                Transition(VizzyGptPanelState.PreviewReady, "Preview ready.");
+                if (environment.IsFlight)
+                {
+                    var fingerprint = environment.GetProgramFingerprint(requestContext.SourceHash!);
+                    var existing = await environment.LoadPendingAsync(fingerprint, cancellationToken);
+                    Transition(
+                        VizzyGptPanelState.PreviewReady,
+                        existing == null
+                            ? "Preview ready. Apply will save this change for Vizzy."
+                            : "Preview ready. Apply will replace the existing pending change.");
+                }
+                else
+                {
+                    Transition(VizzyGptPanelState.PreviewReady, "Preview ready.");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -238,6 +383,83 @@ namespace VizzyGPT.Runtime.Ui
             requestCancellation?.Cancel();
         }
 
+        public async Task RestorePendingAsync()
+        {
+            ThrowIfDisposed();
+            if (environment.IsFlight)
+            {
+                return;
+            }
+
+            if (!adapter.TryGetEditorProgramXml(out var xml, out var readError))
+            {
+                Transition(VizzyGptPanelState.Error, readError);
+                return;
+            }
+
+            var current = VizzyProgramDocument.Parse(xml);
+            var currentHash = VizzyProgramHash.Compute(current);
+            var fingerprint = environment.GetProgramFingerprint(currentHash);
+            var pending = await environment.LoadPendingAsync(fingerprint, CancellationToken.None);
+            if (pending == null)
+            {
+                return;
+            }
+
+            Mode = VizzyGptPanelMode.Modify;
+            restoredPendingFingerprint = pending.ProgramFingerprint;
+            var rebase = new PendingChangeRebaser().TryRebase(pending, current);
+            if (rebase.Status == RebaseStatus.Conflict || rebase.Patch == null)
+            {
+                session = null;
+                pendingConflict = true;
+                Transition(
+                    VizzyGptPanelState.Error,
+                    "Pending change conflict. Send a new Modify prompt or Cancel to discard it.");
+                return;
+            }
+
+            try
+            {
+                var result = VizzyPatchEngine.Apply(current, rebase.Patch);
+                var report = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
+                    .Validate(result.Document, createCatalog());
+                if (!report.IsValid)
+                {
+                    throw new InvalidOperationException(report.Errors[0].Message);
+                }
+
+                session = ChangeSession.Create(current, rebase.Patch, result, report);
+                pendingConflict = false;
+                Transition(
+                    VizzyGptPanelState.PreviewReady,
+                    rebase.Status == RebaseStatus.Rebased
+                        ? "Pending flight change rebased and ready for preview."
+                        : "Pending flight change ready for preview.");
+            }
+            catch (Exception exception)
+            {
+                session = null;
+                pendingConflict = true;
+                Transition(VizzyGptPanelState.Error, "Pending change conflict: " + exception.Message);
+            }
+        }
+
+        public async Task DiscardPendingAsync()
+        {
+            ThrowIfDisposed();
+            if (restoredPendingFingerprint == null)
+            {
+                return;
+            }
+
+            await environment.DeletePendingAsync(restoredPendingFingerprint, CancellationToken.None);
+            restoredPendingFingerprint = null;
+            pendingConflict = false;
+            session = null;
+            Transition(VizzyGptPanelState.Idle, "Pending change discarded.");
+        }
+
         public PreviewDialogModel? ShowPreview()
         {
             ThrowIfDisposed();
@@ -260,6 +482,24 @@ namespace VizzyGPT.Runtime.Ui
             if (session == null || State != VizzyGptPanelState.PreviewReady)
             {
                 return false;
+            }
+
+            if (environment.IsFlight)
+            {
+                if (!IsSessionCurrent())
+                {
+                    Transition(VizzyGptPanelState.Error, "The flight program changed after the preview was created.");
+                    return false;
+                }
+
+                var pending = PendingChange.Create(
+                    environment.GetProgramFingerprint(session.BaseHash),
+                    session,
+                    utcNow());
+                await environment.SavePendingAsync(pending, CancellationToken.None);
+                session = null;
+                Transition(VizzyGptPanelState.Idle, "Pending change saved. Return to Vizzy to apply it.");
+                return true;
             }
 
             if (!TryReadCurrent(out var currentXml, out var currentHash, out var error) ||
@@ -288,6 +528,11 @@ namespace VizzyGPT.Runtime.Ui
 
             undoSession = new AppliedChange(session, currentXml);
             session = null;
+            if (restoredPendingFingerprint != null)
+            {
+                await environment.DeletePendingAsync(restoredPendingFingerprint, CancellationToken.None);
+                restoredPendingFingerprint = null;
+            }
             Transition(VizzyGptPanelState.Idle, "Changes applied.");
             return true;
         }
@@ -360,14 +605,19 @@ namespace VizzyGPT.Runtime.Ui
             if (Mode == VizzyGptPanelMode.Ask)
             {
                 return new RequestContext(
-                    "EDITOR CONTEXT\nAsk mode does not permit program mutation.",
+                    environment.IsFlight
+                        ? environment.BuildFlightContext() + "\nAsk mode does not permit program mutation."
+                        : "EDITOR CONTEXT\nAsk mode does not permit program mutation.",
                     VizzyGptPanelMode.Ask,
                     null,
                     null,
                     null);
             }
 
-            if (!adapter.TryGetEditorProgramXml(out var xml, out var error))
+            var read = environment.IsFlight
+                ? TryGetFlightSnapshot(out var xml, out var error)
+                : adapter.TryGetEditorProgramXml(out xml, out error);
+            if (!read)
             {
                 throw new InvalidOperationException(error);
             }
@@ -376,7 +626,8 @@ namespace VizzyGPT.Runtime.Ui
             var baseHash = VizzyProgramHash.Compute(document);
             return new RequestContext(
                 "Program base hash:\n" + baseHash + "\n" +
-                new ContextBuilder().BuildEditorContext(document, string.Empty, null),
+                new ContextBuilder().BuildEditorContext(document, string.Empty, null) +
+                (environment.IsFlight ? "\n" + environment.BuildFlightContext() : string.Empty),
                 VizzyGptPanelMode.Modify,
                 xml,
                 document,
@@ -452,7 +703,10 @@ namespace VizzyGPT.Runtime.Ui
             xml = string.Empty;
             hash = string.Empty;
             error = null;
-            if (!adapter.TryGetEditorProgramXml(out xml, out var readError))
+            var read = environment.IsFlight
+                ? TryGetFlightSnapshot(out xml, out var readError)
+                : adapter.TryGetEditorProgramXml(out xml, out readError);
+            if (!read)
             {
                 error = readError;
                 return false;
@@ -498,14 +752,27 @@ namespace VizzyGPT.Runtime.Ui
                 StatusText,
                 TranscriptText,
                 State != VizzyGptPanelState.Closed && !isBusy,
-                State == VizzyGptPanelState.Sending,
+                State == VizzyGptPanelState.Sending || pendingConflict,
                 CanApply,
                 CanUndo);
         }
 
-        private static string ProgramFingerprint(string hash)
+        private string ProgramFingerprint(string hash)
         {
-            return "editor-" + hash;
+            return environment.GetProgramFingerprint(hash);
+        }
+
+        private bool TryGetFlightSnapshot(out string xml, out string error)
+        {
+            xml = environment.ResolveLaunchProgramXml() ?? string.Empty;
+            error = string.Empty;
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                return true;
+            }
+
+            error = "The launch-time flight program snapshot is unavailable.";
+            return false;
         }
 
         private bool IsCurrentRequest(long generation, CancellationTokenSource cancellation)
@@ -580,6 +847,8 @@ namespace VizzyGPT.Runtime.Ui
         private Button? previewButton;
         private Button? undoButton;
         private Image? pendingIndicator;
+        private Toggle? askToggle;
+        private Toggle? modifyToggle;
 
         public VizzyGptPanelWorkflow Workflow => workflow ??
             throw new InvalidOperationException("Vizzy GPT panel is not configured.");
@@ -614,6 +883,8 @@ namespace VizzyGPT.Runtime.Ui
             previewButton = RequireElement<Button>(layout, "preview-button");
             undoButton = RequireElement<Button>(layout, "undo-button");
             pendingIndicator = RequireElement<Image>(layout, "pending-indicator");
+            askToggle = RequireElement<Toggle>(layout, "ask-toggle");
+            modifyToggle = RequireElement<Toggle>(layout, "modify-toggle");
 
             if (promptInput != null)
             {
@@ -658,9 +929,21 @@ namespace VizzyGPT.Runtime.Ui
             }
         }
 
-        public void OnCancelButtonClicked()
+        public async void OnCancelButtonClicked()
         {
-            workflow?.CancelRequest();
+            if (workflow == null)
+            {
+                return;
+            }
+
+            if (workflow.HasPendingConflict)
+            {
+                await workflow.DiscardPendingAsync();
+            }
+            else
+            {
+                workflow.CancelRequest();
+            }
         }
 
         public void OnSettingsButtonClicked()
@@ -736,6 +1019,9 @@ namespace VizzyGPT.Runtime.Ui
             {
                 pendingIndicator.gameObject.SetActive(state.State == VizzyGptPanelState.PreviewReady);
             }
+
+            askToggle?.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Ask);
+            modifyToggle?.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Modify);
         }
 
         private void OnPromptValueChanged(string value)

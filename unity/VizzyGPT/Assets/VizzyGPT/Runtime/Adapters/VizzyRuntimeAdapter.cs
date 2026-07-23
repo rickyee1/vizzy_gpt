@@ -167,6 +167,12 @@ namespace VizzyGPT.Runtime.Adapters
             {
                 var game = ModApi.Common.Game.Instance;
                 var flightScene = game == null ? null : game.FlightScene;
+                var craftScript = flightScene?.CraftNode?.CraftScript;
+                if (RuntimeContractProbe.TryFindFlightProgramOnCraft(craftScript, out program))
+                {
+                    return true;
+                }
+
                 if (flightScene != null && RuntimeContractProbe.TryFindFlightProgramMember(flightScene.GetType(), out var member))
                 {
                     program = ReadFlightProgram(flightScene, member);

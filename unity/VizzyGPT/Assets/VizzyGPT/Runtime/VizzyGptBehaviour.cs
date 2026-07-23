@@ -8,10 +8,12 @@ using ModApi.Ui;
 using ModApi.Ui.Events;
 using UnityEngine;
 using VizzyGPT.Core.Api;
+using VizzyGPT.Core.Changes;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Storage;
 using VizzyGPT.Runtime.Adapters;
 using VizzyGPT.Runtime.Api;
+using VizzyGPT.Runtime.Flight;
 using VizzyGPT.Runtime.Security;
 using VizzyGPT.Runtime.Storage;
 using VizzyGPT.Runtime.Ui;
@@ -34,6 +36,8 @@ namespace VizzyGPT.Runtime
         private VizzyGptPanelController? mountedPanel;
         private PreviewDialogController? mountedPreview;
         private SettingsDialogViewController? mountedSettings;
+        private FlightContextCollector? flightContextCollector;
+        private string? activeUserInterfaceId;
 
         private void Awake()
         {
@@ -56,6 +60,46 @@ namespace VizzyGPT.Runtime
                 string.Equals(userInterfaceId, UserInterfaceIds.Flight.FlightSceneUI, StringComparison.Ordinal);
         }
 
+        public static Transform ResolvePanelParent(GameObject? loadedUiRoot, Transform fallback)
+        {
+            return loadedUiRoot == null ? fallback : loadedUiRoot.transform;
+        }
+
+        public static string ResolveProgramFingerprint(string programHash)
+        {
+            return "program-" + programHash;
+        }
+
+        public static async Task<bool> WaitForEditorProgramAsync(
+            Func<bool> tryRead,
+            Func<Task> delayAsync,
+            int maxAttempts)
+        {
+            if (tryRead == null) throw new ArgumentNullException(nameof(tryRead));
+            if (delayAsync == null) throw new ArgumentNullException(nameof(delayAsync));
+            if (maxAttempts < 1) throw new ArgumentOutOfRangeException(nameof(maxAttempts));
+
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                if (tryRead())
+                {
+                    return true;
+                }
+
+                if (attempt + 1 < maxAttempts)
+                {
+                    await delayAsync();
+                }
+            }
+
+            return false;
+        }
+
+        private void Update()
+        {
+            flightContextCollector?.Tick(Time.unscaledDeltaTime);
+        }
+
         private void OnUserInterfaceLoading(object sender, UserInterfaceLoadingEventArgs args)
         {
             if (IsSupportedUserInterfaceId(args.UserInterfaceId))
@@ -71,6 +115,9 @@ namespace VizzyGPT.Runtime
                 return;
             }
 
+            activeUserInterfaceId = args.UserInterfaceId;
+            ConfigureFlightCollector(args.UserInterfaceId);
+
             var panelXml = userInterface.ResourceDatabase.GetResource<TextAsset>(VizzyGptPanelResourcePath);
             if (panelXml == null)
             {
@@ -79,27 +126,110 @@ namespace VizzyGPT.Runtime
             }
 
             DestroyMountedUi();
+            var panelParent = ResolvePanelParent(args.XmlLayout.GameObject, userInterface.Transform);
             mountedPanel = userInterface.BuildUserInterfaceFromXml<VizzyGptPanelController>(
                 panelXml.text,
                 "VizzyGPT.Panel",
                 ConfigureMountedPanel,
-                userInterface.Transform);
+                panelParent);
         }
 
         private void ConfigureMountedPanel(VizzyGptPanelController panel, IXmlLayoutController layoutController)
         {
             var activeStore = RequireStore();
+            var adapter = new VizzyRuntimeAdapter();
+            var environment = CreateWorkflowEnvironment(adapter, activeStore);
             var workflow = new VizzyGptPanelWorkflow(
-                new VizzyRuntimeAdapter(),
+                adapter,
                 (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken),
                 CreateRequest,
                 (fingerprint, xml, createdUtc, cancellationToken) =>
                     activeStore.SaveBackupAsync(fingerprint, xml, createdUtc, cancellationToken),
                 CreateVizzyCatalog,
                 () => DateTime.UtcNow,
-                panel.Render);
+                panel.Render,
+                environment);
             panel.Configure(workflow, OpenSettingsDialog, OpenPreviewDialog);
             panel.Bind(layoutController.XmlLayout);
+            if (!environment.IsFlight)
+            {
+                RestorePendingWhenEditorReadyAsync(workflow, adapter);
+            }
+        }
+
+        private VizzyGptWorkflowEnvironment CreateWorkflowEnvironment(
+            VizzyRuntimeAdapter adapter,
+            FileDataStore activeStore)
+        {
+            var isFlight = string.Equals(
+                activeUserInterfaceId,
+                UserInterfaceIds.Flight.FlightSceneUI,
+                StringComparison.Ordinal);
+            Func<string?> launchProgramXml = () =>
+            {
+                return isFlight && adapter.TryGetFlightProgramXml(out var xml, out _)
+                    ? xml
+                    : null;
+            };
+
+            return new VizzyGptWorkflowEnvironment(
+                isFlight,
+                ResolveProgramFingerprint,
+                launchProgramXml,
+                () => flightContextCollector?.Snapshot().BuildContext() ?? "FLIGHT CONTEXT\nTelemetry summaries:",
+                (programFingerprint, cancellationToken) =>
+                    LoadPendingWithFallbackAsync(activeStore, programFingerprint, cancellationToken),
+                (pending, cancellationToken) => activeStore.SavePendingAsync(pending, cancellationToken),
+                (programFingerprint, cancellationToken) =>
+                    activeStore.DeletePendingAsync(programFingerprint, cancellationToken));
+        }
+
+        private static async Task<PendingChange?> LoadPendingWithFallbackAsync(
+            FileDataStore activeStore,
+            string programFingerprint,
+            CancellationToken cancellationToken)
+        {
+            var exact = await activeStore.LoadPendingAsync(programFingerprint, cancellationToken);
+            return exact ?? await activeStore.LoadOnlyPendingAsync(cancellationToken);
+        }
+
+        private void ConfigureFlightCollector(string userInterfaceId)
+        {
+            flightContextCollector?.Dispose();
+            flightContextCollector = null;
+            if (!string.Equals(userInterfaceId, UserInterfaceIds.Flight.FlightSceneUI, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var scene = Game.Instance?.FlightScene;
+            if (scene != null)
+            {
+                flightContextCollector = FlightContextCollector.Create(scene, () => DateTime.UtcNow);
+            }
+        }
+
+        private async void RestorePendingWhenEditorReadyAsync(
+            VizzyGptPanelWorkflow workflow,
+            VizzyRuntimeAdapter adapter)
+        {
+            try
+            {
+                var ready = await WaitForEditorProgramAsync(
+                    () => adapter.TryGetEditorProgramXml(out _, out _),
+                    () => Task.Delay(100),
+                    100);
+                if (!ready || mountedPanel == null || !ReferenceEquals(mountedPanel.Workflow, workflow))
+                {
+                    return;
+                }
+
+                await workflow.RestorePendingAsync();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("VizzyGPT could not restore a pending flight change: " + exception.Message);
+            }
         }
 
         private AiRequest CreateRequest(string prompt, string context)
@@ -294,6 +424,9 @@ namespace VizzyGPT.Runtime
             savedSettings = null;
             openAiClient = null;
             store = null;
+            flightContextCollector?.Dispose();
+            flightContextCollector = null;
+            activeUserInterfaceId = null;
         }
     }
 }
