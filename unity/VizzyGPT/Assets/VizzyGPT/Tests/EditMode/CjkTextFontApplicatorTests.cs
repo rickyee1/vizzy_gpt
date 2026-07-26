@@ -64,7 +64,7 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Null_font_is_a_safe_no_op()
         {
-            var text = new GameObject("text").AddComponent<TextMeshProUGUI>();
+            var text = new GameObject("text").AddComponent<TestTmpText>();
             var original = text.font;
             try
             {
