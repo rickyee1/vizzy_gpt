@@ -90,7 +90,7 @@ namespace VizzyGPT.Tests.EditMode
                 UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA,
                 1024,
                 1024,
-                UnityEngine.TextCore.LowLevel.AtlasPopulationMode.Dynamic,
+                AtlasPopulationMode.Dynamic,
                 true);
             Assert.That(font, Is.Not.Null);
             return font;
