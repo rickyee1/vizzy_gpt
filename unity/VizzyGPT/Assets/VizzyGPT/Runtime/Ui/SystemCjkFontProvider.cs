@@ -70,34 +70,69 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             resolutionAttempted = true;
-            var installed = new HashSet<string>(
-                backend.GetInstalledFontNames() ?? Array.Empty<string>(),
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var family in PreferredFamilies)
+            try
             {
-                if (!installed.Contains(family))
-                {
-                    continue;
-                }
+                var installed = new HashSet<string>(
+                    backend.GetInstalledFontNames() ?? Array.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
 
-                var candidate = backend.CreateDynamicFontAsset(family);
-                if (candidate == null)
+                foreach (var family in PreferredFamilies)
                 {
-                    continue;
-                }
+                    if (!installed.Contains(family))
+                    {
+                        continue;
+                    }
 
-                createdAssets.Add(candidate);
-                if (backend.SupportsCharacters(candidate, ProbeCharacters))
-                {
-                    resolvedAsset = candidate;
-                    return resolvedAsset;
+                    TMP_FontAsset? candidate;
+                    try
+                    {
+                        candidate = backend.CreateDynamicFontAsset(family);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    createdAssets.Add(candidate);
+                    try
+                    {
+                        if (backend.SupportsCharacters(candidate, ProbeCharacters))
+                        {
+                            resolvedAsset = candidate;
+                            return resolvedAsset;
+                        }
+                    }
+                    catch
+                    {
+                        // A broken candidate is handled like an unsupported candidate.
+                    }
                 }
             }
+            catch
+            {
+                // Font discovery is optional and must not block panel startup.
+            }
 
-            logWarning(
-                "VizzyGPT could not find a CJK system font. Chinese text may appear as missing glyphs.");
+            WarnNoFont();
             return null;
+        }
+
+        private void WarnNoFont()
+        {
+            try
+            {
+                logWarning(
+                    "VizzyGPT could not find a CJK system font. Chinese text may appear as missing glyphs.");
+            }
+            catch
+            {
+                // Logging must not turn optional font discovery into a startup failure.
+            }
         }
 
         public void Dispose()
@@ -127,23 +162,54 @@ namespace VizzyGPT.Runtime.Ui
 
         public TMP_FontAsset? CreateDynamicFontAsset(string familyName)
         {
-            var source = Font.CreateDynamicFontFromOSFont(familyName, 32);
-            if (source == null)
+            Font? source = null;
+            TMP_FontAsset? asset = null;
+            var succeeded = false;
+            try
+            {
+                source = Font.CreateDynamicFontFromOSFont(familyName, 32);
+                if (source == null)
+                {
+                    return null;
+                }
+
+                asset = TMP_FontAsset.CreateFontAsset(
+                    source,
+                    32,
+                    4,
+                    GlyphRenderMode.SDFAA,
+                    1024,
+                    1024,
+                    AtlasPopulationMode.Dynamic,
+                    true);
+                if (asset == null)
+                {
+                    return null;
+                }
+
+                asset.name = "VizzyGPT System CJK - " + familyName;
+                succeeded = true;
+                return asset;
+            }
+            catch
             {
                 return null;
             }
+            finally
+            {
+                if (!succeeded)
+                {
+                    if (asset != null)
+                    {
+                        UnityEngine.Object.Destroy(asset);
+                    }
 
-            var asset = TMP_FontAsset.CreateFontAsset(
-                source,
-                32,
-                4,
-                GlyphRenderMode.SDFAA,
-                1024,
-                1024,
-                AtlasPopulationMode.Dynamic,
-                true);
-            asset.name = "VizzyGPT System CJK - " + familyName;
-            return asset;
+                    if (source != null)
+                    {
+                        UnityEngine.Object.Destroy(source);
+                    }
+                }
+            }
         }
 
         public bool SupportsCharacters(TMP_FontAsset asset, string characters)
