@@ -15,7 +15,7 @@ namespace VizzyGPT.Tests.EditMode
             var root = new GameObject("input");
             var text = new GameObject("text").AddComponent<TextMeshProUGUI>();
             var placeholder = new GameObject("placeholder").AddComponent<TextMeshProUGUI>();
-            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var font = CreateTestFontAsset();
             try
             {
                 var input = root.AddComponent<TMP_InputField>();
@@ -32,14 +32,14 @@ namespace VizzyGPT.Tests.EditMode
             finally
             {
                 Object.DestroyImmediate(root);
-                Object.DestroyImmediate(font);
+                DestroyTestFontAsset(font);
             }
         }
 
         [Test]
         public void ApplyToText_updates_dynamic_targets_but_not_unlisted_static_label()
         {
-            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var font = CreateTestFontAsset();
             var transcript = new GameObject("transcript").AddComponent<TextMeshProUGUI>();
             var status = new GameObject("status").AddComponent<TextMeshProUGUI>();
             var staticLabel = new GameObject("static").AddComponent<TextMeshProUGUI>();
@@ -57,7 +57,7 @@ namespace VizzyGPT.Tests.EditMode
                 Object.DestroyImmediate(transcript.gameObject);
                 Object.DestroyImmediate(status.gameObject);
                 Object.DestroyImmediate(staticLabel.gameObject);
-                Object.DestroyImmediate(font);
+                DestroyTestFontAsset(font);
             }
         }
 
@@ -75,6 +75,54 @@ namespace VizzyGPT.Tests.EditMode
             finally
             {
                 Object.DestroyImmediate(text.gameObject);
+            }
+        }
+
+        private static TMP_FontAsset CreateTestFontAsset()
+        {
+            var source = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Assert.That(source, Is.Not.Null);
+
+            var font = TMP_FontAsset.CreateFontAsset(
+                source,
+                32,
+                4,
+                UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA,
+                1024,
+                1024,
+                UnityEngine.TextCore.LowLevel.AtlasPopulationMode.Dynamic,
+                true);
+            Assert.That(font, Is.Not.Null);
+            return font;
+        }
+
+        private static void DestroyTestFontAsset(TMP_FontAsset? font)
+        {
+            if (font == null)
+            {
+                return;
+            }
+
+            var material = font.material;
+            var atlasTextures = font.atlasTextures;
+            Object.DestroyImmediate(font);
+
+            if (material != null)
+            {
+                Object.DestroyImmediate(material);
+            }
+
+            if (atlasTextures == null)
+            {
+                return;
+            }
+
+            foreach (var atlasTexture in atlasTextures)
+            {
+                if (atlasTexture != null)
+                {
+                    Object.DestroyImmediate(atlasTexture);
+                }
             }
         }
     }

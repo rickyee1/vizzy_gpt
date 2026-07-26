@@ -37,3 +37,9 @@ Deferred to the controller-owned Unity run. `powershell -ExecutionPolicy Bypass 
 ## Concerns
 
 The Unity EditMode compile and test result remain unverified in this worker. The controller must run the Unity suite after this commit to provide GREEN evidence.
+
+## Follow-Up Failure and Fix
+
+The controller ran the Unity EditMode suite and reported 2 failures out of 72 tests. The two applicator tests failed because `ScriptableObject.CreateInstance<TMP_FontAsset>()` creates an uninitialized asset; assigning it caused `TMP_FontAsset.ReadFontAssetDefinition` to throw `NullReferenceException`.
+
+The tests now load Unity's deterministic built-in `LegacyRuntime.ttf` and create the asset through `TMP_FontAsset.CreateFontAsset`. Cleanup destroys the generated TMP font asset, material, and atlas textures, while leaving the built-in source font intact. Unity was not rerun in this worker; the controller will rerun the suite after this commit.
