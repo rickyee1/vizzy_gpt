@@ -80,20 +80,42 @@ namespace VizzyGPT.Tests.EditMode
 
         private static TMP_FontAsset CreateTestFontAsset()
         {
-            var source = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            Assert.That(source, Is.Not.Null);
+            TMP_FontAsset? font = null;
+            Texture2D? atlasTexture = null;
+            Material? material = null;
+            try
+            {
+                font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+                atlasTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+                var shader = Shader.Find("UI/Default");
+                Assert.That(shader, Is.Not.Null);
 
-            var font = TMP_FontAsset.CreateFontAsset(
-                source,
-                32,
-                4,
-                UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA,
-                1024,
-                1024,
-                AtlasPopulationMode.Dynamic,
-                true);
-            Assert.That(font, Is.Not.Null);
-            return font;
+                material = new Material(shader);
+                material.SetTexture("_MainTex", atlasTexture);
+                font.atlasTextures = new[] { atlasTexture };
+                font.material = material;
+                font.ReadFontAssetDefinition();
+                return font;
+            }
+            catch
+            {
+                if (font != null)
+                {
+                    Object.DestroyImmediate(font);
+                }
+
+                if (material != null)
+                {
+                    Object.DestroyImmediate(material);
+                }
+
+                if (atlasTexture != null)
+                {
+                    Object.DestroyImmediate(atlasTexture);
+                }
+
+                throw;
+            }
         }
 
         private static void DestroyTestFontAsset(TMP_FontAsset? font)
