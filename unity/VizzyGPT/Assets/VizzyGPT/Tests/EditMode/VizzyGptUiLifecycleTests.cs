@@ -41,8 +41,8 @@ namespace VizzyGPT.Tests.EditMode
             }
             finally
             {
-                Object.DestroyImmediate(loadedUiRoot);
-                Object.DestroyImmediate(fallbackRoot);
+                UnityEngine.Object.DestroyImmediate(loadedUiRoot);
+                UnityEngine.Object.DestroyImmediate(fallbackRoot);
             }
         }
 
@@ -89,15 +89,15 @@ namespace VizzyGPT.Tests.EditMode
                     ["prompt-input"] = promptInput,
                     ["transcript-text"] = transcript,
                     ["status-text"] = status,
-                    ["vizzy-gpt-panel"] = root.transform as RectTransform,
-                    ["gpt-launcher-button"] = root.AddComponent<Button>(),
-                    ["send-button"] = root.AddComponent<Button>(),
-                    ["cancel-button"] = root.AddComponent<Button>(),
-                    ["preview-button"] = root.AddComponent<Button>(),
-                    ["undo-button"] = root.AddComponent<Button>(),
-                    ["pending-indicator"] = root.AddComponent<Image>(),
-                    ["ask-toggle"] = root.AddComponent<Toggle>(),
-                    ["modify-toggle"] = root.AddComponent<Toggle>()
+                    ["vizzy-gpt-panel"] = (RectTransform)root.transform,
+                    ["gpt-launcher-button"] = CreateComponent<Button>(root.transform, "gpt-launcher-button"),
+                    ["send-button"] = CreateComponent<Button>(root.transform, "send-button"),
+                    ["cancel-button"] = CreateComponent<Button>(root.transform, "cancel-button"),
+                    ["preview-button"] = CreateComponent<Button>(root.transform, "preview-button"),
+                    ["undo-button"] = CreateComponent<Button>(root.transform, "undo-button"),
+                    ["pending-indicator"] = CreateComponent<Image>(root.transform, "pending-indicator"),
+                    ["ask-toggle"] = CreateComponent<Toggle>(root.transform, "ask-toggle"),
+                    ["modify-toggle"] = CreateComponent<Toggle>(root.transform, "modify-toggle")
                 });
                 var panel = root.AddComponent<VizzyGptPanelController>();
 
@@ -112,8 +112,8 @@ namespace VizzyGPT.Tests.EditMode
             }
             finally
             {
-                Object.DestroyImmediate(root);
-                Object.DestroyImmediate(font);
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(font);
             }
         }
 
@@ -122,6 +122,13 @@ namespace VizzyGPT.Tests.EditMode
             var text = new GameObject(name).AddComponent<TestTmpText>();
             text.transform.SetParent(parent);
             return text;
+        }
+
+        private static T CreateComponent<T>(Transform parent, string name) where T : Component
+        {
+            var component = new GameObject(name, typeof(RectTransform)).AddComponent<T>();
+            component.transform.SetParent(parent);
+            return component;
         }
 
         private sealed class TestTmpText : TMP_Text
@@ -149,14 +156,21 @@ namespace VizzyGPT.Tests.EditMode
 
             public IXmlLayoutController? XmlLayoutController => null;
 
-            public Component? GetElementById(string id)
+            public IXmlElement GetElementById(string id)
             {
-                return null;
+                return null!;
             }
 
-            public T? GetElementById<T>(string id) where T : Component
+            public T GetElementById<T>(string id)
             {
-                return elements.TryGetValue(id, out var component) ? component as T : null;
+                return elements.TryGetValue(id, out var component) && component is T typed
+                    ? typed
+                    : default!;
+            }
+
+            public string GetElementId(RectTransform element)
+            {
+                return string.Empty;
             }
 
             public void Hide(Action? onCompleteCallback, bool forceEvenIfNotVisible)

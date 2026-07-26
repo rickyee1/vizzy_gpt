@@ -39,7 +39,7 @@ namespace VizzyGPT.Tests.EditMode
             finally
             {
                 LogAssert.ignoreFailingMessages = false;
-                Object.DestroyImmediate(gameObject);
+                UnityEngine.Object.DestroyImmediate(gameObject);
             }
         }
 
@@ -79,8 +79,8 @@ namespace VizzyGPT.Tests.EditMode
             }
             finally
             {
-                Object.DestroyImmediate(root);
-                Object.DestroyImmediate(font);
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(font);
             }
         }
 
@@ -142,14 +142,21 @@ namespace VizzyGPT.Tests.EditMode
 
             public IXmlLayoutController? XmlLayoutController => null;
 
-            public Component? GetElementById(string id)
+            public IXmlElement GetElementById(string id)
             {
-                return null;
+                return null!;
             }
 
-            public T? GetElementById<T>(string id) where T : Component
+            public T GetElementById<T>(string id)
             {
-                return elements.TryGetValue(id, out var component) ? component as T : null;
+                return elements.TryGetValue(id, out var component) && component is T typed
+                    ? typed
+                    : default!;
+            }
+
+            public string GetElementId(RectTransform element)
+            {
+                return string.Empty;
             }
 
             public void Hide(Action? onCompleteCallback, bool forceEvenIfNotVisible)
