@@ -1,5 +1,6 @@
 #nullable enable
 
+using System.Reflection;
 using NUnit.Framework;
 using TMPro;
 using UnityEngine;
@@ -94,6 +95,11 @@ namespace VizzyGPT.Tests.EditMode
                 material.SetTexture("_MainTex", atlasTexture);
                 font.atlasTextures = new[] { atlasTexture };
                 font.material = material;
+                var versionField = typeof(TMP_FontAsset).GetField(
+                    "m_Version",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(versionField, Is.Not.Null);
+                versionField!.SetValue(font, "1.1.0");
                 font.ReadFontAssetDefinition();
                 return font;
             }
