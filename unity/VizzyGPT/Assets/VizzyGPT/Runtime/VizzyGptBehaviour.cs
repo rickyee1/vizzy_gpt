@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using ModApi.Common;
 using ModApi.Ui;
 using ModApi.Ui.Events;
+using TMPro;
 using UnityEngine;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
@@ -37,10 +38,13 @@ namespace VizzyGPT.Runtime
         private PreviewDialogController? mountedPreview;
         private SettingsDialogViewController? mountedSettings;
         private FlightContextCollector? flightContextCollector;
+        private SystemCjkFontProvider? cjkFontProvider;
+        private TMP_FontAsset? cjkFont;
         private string? activeUserInterfaceId;
 
         private void Awake()
         {
+            cjkFontProvider = SystemCjkFontProvider.CreateDefault();
             userInterface = Game.Instance == null ? null : Game.Instance.UserInterface;
             store = new FileDataStore(JunoDataPaths.Root);
             openAiClient = new OpenAiClient(new UnityWebRequestTransport());
@@ -153,7 +157,8 @@ namespace VizzyGPT.Runtime
                     ? RuntimeCompatibilityResult.Compatible("Flight.Craft.FlightProgram")
                     : adapter.Compatibility);
             panel.Configure(workflow, OpenSettingsDialog, OpenPreviewDialog);
-            panel.Bind(layoutController.XmlLayout);
+            cjkFont = cjkFontProvider?.Resolve();
+            panel.Bind(layoutController.XmlLayout, cjkFont);
             if (!environment.IsFlight)
             {
                 RestorePendingWhenEditorReadyAsync(workflow, adapter);
@@ -302,7 +307,7 @@ namespace VizzyGPT.Runtime
                 (dialog, layoutController) =>
                 {
                     dialog.Configure(RequirePanelWorkflow(), DestroyMountedPreview);
-                    dialog.Bind(layoutController.XmlLayout, model);
+                    dialog.Bind(layoutController.XmlLayout, model, cjkFont);
                 },
                 userInterface.Transform);
         }
@@ -429,6 +434,9 @@ namespace VizzyGPT.Runtime
             store = null;
             flightContextCollector?.Dispose();
             flightContextCollector = null;
+            cjkFontProvider?.Dispose();
+            cjkFontProvider = null;
+            cjkFont = null;
             activeUserInterfaceId = null;
         }
     }

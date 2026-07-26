@@ -922,7 +922,7 @@ namespace VizzyGPT.Runtime.Ui
             Render(workflow.CurrentRenderState);
         }
 
-        public void Bind(IXmlLayout layout)
+        public void Bind(IXmlLayout layout, TMP_FontAsset? cjkFont = null)
         {
             if (layout == null)
             {
@@ -942,6 +942,9 @@ namespace VizzyGPT.Runtime.Ui
             pendingIndicator = RequireElement<Image>(layout, "pending-indicator");
             askToggle = RequireElement<Toggle>(layout, "ask-toggle");
             modifyToggle = RequireElement<Toggle>(layout, "modify-toggle");
+
+            CjkTextFontApplicator.ApplyToInput(promptInput, cjkFont);
+            CjkTextFontApplicator.ApplyToText(cjkFont, transcriptText, statusText);
 
             if (promptInput != null)
             {

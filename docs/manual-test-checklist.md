@@ -22,6 +22,15 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [ ] Repeat with Chat Completions mode against the loopback endpoint.
 - [ ] Configure a custom HTTPS-compatible base URL and confirm the displayed destination host matches it.
 
+## Chinese Text Rendering
+
+- [ ] Type `浣犲ソ锛岃浠嬬粛褰撳墠 Vizzy 绋嬪簭` in the prompt. Expected: every character is visible.
+- [ ] Send the request and receive a Chinese answer. Expected: transcript text is visible.
+- [ ] Request a Modify patch with a Chinese summary and open Preview. Expected: summary and warning content are visible.
+- [ ] Close and reopen the panel. Expected: no duplicate font warning appears in `Player.log`.
+- [ ] Confirm English labels and buttons retain their existing appearance.
+- Result: not run in this task; live acceptance is deferred to the controller.
+
 ## Editor Modify
 
 - [x] Prompt `add loopback variable`. Expected preview line: `Added variable 'gpt_loopback'.`

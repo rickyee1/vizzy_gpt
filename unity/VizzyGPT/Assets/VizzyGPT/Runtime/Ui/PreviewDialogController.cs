@@ -72,7 +72,7 @@ namespace VizzyGPT.Runtime.Ui
             close = closeAction ?? throw new ArgumentNullException(nameof(closeAction));
         }
 
-        public void Bind(IXmlLayout layout, PreviewDialogModel model)
+        public void Bind(IXmlLayout layout, PreviewDialogModel model, TMP_FontAsset? cjkFont = null)
         {
             if (layout == null)
             {
@@ -89,6 +89,13 @@ namespace VizzyGPT.Runtime.Ui
             changedText = RequireElement<TMP_Text>(layout, "changed-text");
             removedText = RequireElement<TMP_Text>(layout, "removed-text");
             warningsText = RequireElement<TMP_Text>(layout, "warnings-text");
+            CjkTextFontApplicator.ApplyToText(
+                cjkFont,
+                summaryText,
+                addedText,
+                changedText,
+                removedText,
+                warningsText);
             Render(model);
         }
 

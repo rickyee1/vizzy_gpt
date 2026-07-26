@@ -1,10 +1,15 @@
 #nullable enable
 
+using System;
+using System.Collections.Generic;
 using ModApi.Ui;
 using NUnit.Framework;
 using System.Threading.Tasks;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 using VizzyGPT.Runtime;
+using VizzyGPT.Runtime.Ui;
 
 namespace VizzyGPT.Tests.EditMode
 {
@@ -61,6 +66,110 @@ namespace VizzyGPT.Tests.EditMode
 
             Assert.That(ready, Is.True);
             Assert.That(reads, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void Panel_bind_applies_the_cjk_font_only_to_dynamic_text()
+        {
+            var root = new GameObject("panel-layout", typeof(RectTransform));
+            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            try
+            {
+                var promptInput = root.AddComponent<TMP_InputField>();
+                var promptText = CreateText(root.transform, "prompt-text");
+                var promptPlaceholder = CreateText(root.transform, "prompt-placeholder");
+                promptInput.textComponent = promptText;
+                promptInput.placeholder = promptPlaceholder;
+                var transcript = CreateText(root.transform, "transcript-text");
+                var status = CreateText(root.transform, "status-text");
+                var askButtonLabel = CreateText(root.transform, "ask-button-label");
+                var originalAskButtonLabelFont = askButtonLabel.font;
+                var layout = new FakeXmlLayout(root, new Dictionary<string, Component>
+                {
+                    ["prompt-input"] = promptInput,
+                    ["transcript-text"] = transcript,
+                    ["status-text"] = status,
+                    ["vizzy-gpt-panel"] = root.transform as RectTransform,
+                    ["gpt-launcher-button"] = root.AddComponent<Button>(),
+                    ["send-button"] = root.AddComponent<Button>(),
+                    ["cancel-button"] = root.AddComponent<Button>(),
+                    ["preview-button"] = root.AddComponent<Button>(),
+                    ["undo-button"] = root.AddComponent<Button>(),
+                    ["pending-indicator"] = root.AddComponent<Image>(),
+                    ["ask-toggle"] = root.AddComponent<Toggle>(),
+                    ["modify-toggle"] = root.AddComponent<Toggle>()
+                });
+                var panel = root.AddComponent<VizzyGptPanelController>();
+
+                panel.Bind(layout, font);
+
+                Assert.That(promptInput.textComponent.font, Is.SameAs(font));
+                Assert.That(promptPlaceholder.font, Is.SameAs(font));
+                Assert.That(transcript.font, Is.SameAs(font));
+                Assert.That(status.font, Is.SameAs(font));
+                Assert.That(askButtonLabel.font, Is.SameAs(originalAskButtonLabelFont));
+                Assert.That(askButtonLabel.font, Is.Not.SameAs(font));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+                Object.DestroyImmediate(font);
+            }
+        }
+
+        private static TestTmpText CreateText(Transform parent, string name)
+        {
+            var text = new GameObject(name).AddComponent<TestTmpText>();
+            text.transform.SetParent(parent);
+            return text;
+        }
+
+        private sealed class TestTmpText : TMP_Text
+        {
+            protected override void LoadFontAsset()
+            {
+            }
+        }
+
+        private sealed class FakeXmlLayout : IXmlLayout
+        {
+            private readonly Dictionary<string, Component> elements;
+
+            public FakeXmlLayout(GameObject gameObject, Dictionary<string, Component> elements)
+            {
+                GameObject = gameObject;
+                this.elements = elements;
+            }
+
+            public GameObject GameObject { get; }
+
+            public IXmlLayout? ParentLayout => null;
+
+            public string Xml { get; set; } = string.Empty;
+
+            public IXmlLayoutController? XmlLayoutController => null;
+
+            public Component? GetElementById(string id)
+            {
+                return null;
+            }
+
+            public T? GetElementById<T>(string id) where T : Component
+            {
+                return elements.TryGetValue(id, out var component) ? component as T : null;
+            }
+
+            public void Hide(Action? onCompleteCallback, bool forceEvenIfNotVisible)
+            {
+            }
+
+            public void RebuildLayout(bool forceEvenIfXmlUnchanged, bool throwExceptionIfXmlIsInvalid)
+            {
+            }
+
+            public void Show(Action? onCompleteCallback, bool forceEvenIfVisible)
+            {
+            }
         }
     }
 }
