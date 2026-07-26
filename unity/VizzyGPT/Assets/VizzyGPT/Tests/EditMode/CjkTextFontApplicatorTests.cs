@@ -1,6 +1,5 @@
 #nullable enable
 
-using System.Reflection;
 using NUnit.Framework;
 using TMPro;
 using UnityEngine;
@@ -14,9 +13,9 @@ namespace VizzyGPT.Tests.EditMode
         public void ApplyToInput_updates_visible_text_and_text_placeholder()
         {
             var root = new GameObject("input");
-            var text = new GameObject("text").AddComponent<TextMeshProUGUI>();
-            var placeholder = new GameObject("placeholder").AddComponent<TextMeshProUGUI>();
-            var font = CreateTestFontAsset();
+            var text = new GameObject("text").AddComponent<TestTmpText>();
+            var placeholder = new GameObject("placeholder").AddComponent<TestTmpText>();
+            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
             try
             {
                 var input = root.AddComponent<TMP_InputField>();
@@ -33,17 +32,17 @@ namespace VizzyGPT.Tests.EditMode
             finally
             {
                 Object.DestroyImmediate(root);
-                DestroyTestFontAsset(font);
+                Object.DestroyImmediate(font);
             }
         }
 
         [Test]
         public void ApplyToText_updates_dynamic_targets_but_not_unlisted_static_label()
         {
-            var font = CreateTestFontAsset();
-            var transcript = new GameObject("transcript").AddComponent<TextMeshProUGUI>();
-            var status = new GameObject("status").AddComponent<TextMeshProUGUI>();
-            var staticLabel = new GameObject("static").AddComponent<TextMeshProUGUI>();
+            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var transcript = new GameObject("transcript").AddComponent<TestTmpText>();
+            var status = new GameObject("status").AddComponent<TestTmpText>();
+            var staticLabel = new GameObject("static").AddComponent<TestTmpText>();
             var original = staticLabel.font;
             try
             {
@@ -58,7 +57,7 @@ namespace VizzyGPT.Tests.EditMode
                 Object.DestroyImmediate(transcript.gameObject);
                 Object.DestroyImmediate(status.gameObject);
                 Object.DestroyImmediate(staticLabel.gameObject);
-                DestroyTestFontAsset(font);
+                Object.DestroyImmediate(font);
             }
         }
 
@@ -79,78 +78,10 @@ namespace VizzyGPT.Tests.EditMode
             }
         }
 
-        private static TMP_FontAsset CreateTestFontAsset()
+        private sealed class TestTmpText : TMP_Text
         {
-            TMP_FontAsset? font = null;
-            Texture2D? atlasTexture = null;
-            Material? material = null;
-            try
+            protected override void LoadFontAsset()
             {
-                font = ScriptableObject.CreateInstance<TMP_FontAsset>();
-                atlasTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-                var shader = Shader.Find("UI/Default");
-                Assert.That(shader, Is.Not.Null);
-
-                material = new Material(shader);
-                material.SetTexture("_MainTex", atlasTexture);
-                font.atlasTextures = new[] { atlasTexture };
-                font.material = material;
-                var versionField = typeof(TMP_FontAsset).GetField(
-                    "m_Version",
-                    BindingFlags.Instance | BindingFlags.NonPublic);
-                Assert.That(versionField, Is.Not.Null);
-                versionField!.SetValue(font, "1.1.0");
-                font.ReadFontAssetDefinition();
-                return font;
-            }
-            catch
-            {
-                if (font != null)
-                {
-                    Object.DestroyImmediate(font);
-                }
-
-                if (material != null)
-                {
-                    Object.DestroyImmediate(material);
-                }
-
-                if (atlasTexture != null)
-                {
-                    Object.DestroyImmediate(atlasTexture);
-                }
-
-                throw;
-            }
-        }
-
-        private static void DestroyTestFontAsset(TMP_FontAsset? font)
-        {
-            if (font == null)
-            {
-                return;
-            }
-
-            var material = font.material;
-            var atlasTextures = font.atlasTextures;
-            Object.DestroyImmediate(font);
-
-            if (material != null)
-            {
-                Object.DestroyImmediate(material);
-            }
-
-            if (atlasTextures == null)
-            {
-                return;
-            }
-
-            foreach (var atlasTexture in atlasTextures)
-            {
-                if (atlasTexture != null)
-                {
-                    Object.DestroyImmediate(atlasTexture);
-                }
             }
         }
     }
