@@ -18,7 +18,9 @@ MonoBehaviour:
   _description: GPT assistant for Vizzy
   _loadPriority: 1000
   _name: VizzyGPT
-  _otherAssets: []
+  _otherAssets:
+  - {fileID: 12800000, guid: 42a32e345f8e70148801e80491313a76, type: 3}
+  - {fileID: 4900000, guid: 8284231862185744b9b188ecf2e9967f, type: 3}
   _prefabs: []
   _steamDescription: 
   _steamLanguage: English

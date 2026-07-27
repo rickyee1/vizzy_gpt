@@ -22,10 +22,29 @@ system font.
 
 ## Runtime Architecture
 
-Store the source font under a VizzyGPT `Resources` path with font data included.
-At startup, load that packaged `UnityEngine.Font` and create one dynamic,
-multi-atlas `TMP_FontAsset`. The dynamic atlas adds glyphs on demand, so model
-responses are not limited to a predefined Chinese character subset.
+Store the source font under the VizzyGPT asset tree with font data included, and
+list both the font and OFL `TextAsset` in `ModData.asset` `_otherAssets`.
+That explicit ModTools list is what guarantees inclusion in the installed
+AssetBundle; a Unity `Resources` folder alone does not establish the Juno mod
+runtime loading contract.
+
+At startup, load the packaged `UnityEngine.Font` through
+`Mod.Instance.ResourceLoader.LoadAsset<Font>` using the full
+`Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf`
+path, then create one dynamic, multi-atlas `TMP_FontAsset`. The dynamic atlas
+adds glyphs on demand, so model responses are not limited to a predefined
+Chinese character subset.
+
+`VizzyGPT.Runtime` cannot reference Assembly-CSharp, which owns
+`Assets.Scripts.Mod`. The Runtime provider therefore accepts a
+`Func<string, Font?>` loader delegate. `Assets.Scripts.Mod.OnModInitialized`
+creates the delegate that calls
+`Mod.Instance.ResourceLoader.LoadAsset<Font>(fullPath)` and passes it to
+`VizzyGptMod.EnsureInitialized`. The Runtime bootstrap creates the root
+component, then calls an explicit
+`VizzyGptBehaviour.InitializeFontLoader(loadFont)` instance method. The
+Behaviour creates `BundledCjkFontProvider` from that delegate and never
+references `Assets.Scripts.Mod` or Assembly-CSharp.
 
 Reuse the existing `CjkTextFontApplicator` and keep its target scope unchanged:
 
@@ -35,7 +54,7 @@ Reuse the existing `CjkTextFontApplicator` and keep its target scope unchanged:
 
 Static English titles, labels, toggles, and buttons continue using the game's
 font. The created TMP asset is cached for the behavior lifetime and released on
-destroy. The packaged source font is owned by Unity's resource system and is not
+destroy. The packaged source font is owned by the mod ResourceLoader and is not
 destroyed by VizzyGPT.
 
 ## Failure Handling
@@ -46,9 +65,11 @@ the panel does not repeat loading or warning.
 
 ## Testing And Acceptance
 
-Automated EditMode tests cover successful bundled-font resolution, cached reuse,
-missing-resource fallback, disposal, dynamic-text application, and preservation
-of static UI fonts. The release package must include the font and OFL text.
+Automated EditMode tests cover `ModData.asset` AssetBundle inclusion, exact
+full-path contracts, editor font-face and Chinese-glyph integrity, successful
+bundled-font resolution, cached reuse, missing-resource fallback, disposal,
+dynamic-text application, and preservation of static UI fonts. The release
+package must include the font and OFL text.
 
 Live acceptance in Juno requires:
 

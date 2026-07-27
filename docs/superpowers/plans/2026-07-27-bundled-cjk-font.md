@@ -43,8 +43,9 @@
 - Test: `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/BundledCjkFontProviderTests.cs`
 
 **Interfaces:**
-- Produces resource key `Fonts/VizzyGPT/NotoSansCJKsc-Regular` as `UnityEngine.Font`.
-- Produces resource key `Fonts/VizzyGPT/OFL` as `UnityEngine.TextAsset`.
+- Produces full mod asset path `Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf` as `UnityEngine.Font`.
+- Produces full mod asset path `Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/OFL.txt` as `UnityEngine.TextAsset`.
+- Lists both assets in `ModData.asset` `_otherAssets` so ModTools includes them in the installed AssetBundle.
 
 - [ ] **Step 1: Write failing resource contract tests**
 
@@ -55,6 +56,7 @@ Create the test file with:
 
 using NUnit.Framework;
 using TMPro;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.TextCore.LowLevel;
 
@@ -65,8 +67,8 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Packaged_font_resource_can_create_chinese_glyphs()
         {
-            var source = Resources.Load<Font>(
-                "Fonts/VizzyGPT/NotoSansCJKsc-Regular");
+            var source = AssetDatabase.LoadAssetAtPath<Font>(
+                "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf");
 
             Assert.That(source, Is.Not.Null);
             var asset = TMP_FontAsset.CreateFontAsset(
@@ -96,7 +98,8 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Packaged_font_includes_the_OFL_license()
         {
-            var license = Resources.Load<TextAsset>("Fonts/VizzyGPT/OFL");
+            var license = AssetDatabase.LoadAssetAtPath<TextAsset>(
+                "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/OFL.txt");
 
             Assert.That(license, Is.Not.Null);
             Assert.That(license.text, Does.Contain("SIL OPEN FONT LICENSE Version 1.1"));
@@ -184,6 +187,8 @@ git commit -m "feat: bundle licensed Chinese font"
 - Produces `IBundledCjkFontBackend.LoadSourceFont(string): Font?`.
 - Produces `IBundledCjkFontBackend.CreateDynamicFontAsset(Font): TMP_FontAsset?`.
 - Produces `IBundledCjkFontBackend.Release(TMP_FontAsset): void`.
+- Produces `BundledCjkFontProvider.FontAssetPath` as the full `Assets/...` ModTools path.
+- Consumes `Func<string, Font?>` so Runtime does not reference Assembly-CSharp.
 - Produces `BundledCjkFontProvider.Resolve(): TMP_FontAsset?`.
 
 - [ ] **Step 1: Add failing provider behavior tests**
@@ -262,8 +267,8 @@ namespace VizzyGPT.Runtime.Ui
 
     public sealed class BundledCjkFontProvider : IDisposable
     {
-        public const string ResourcePath =
-            "Fonts/VizzyGPT/NotoSansCJKsc-Regular";
+        public const string FontAssetPath =
+            "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf";
 
         private readonly IBundledCjkFontBackend backend;
         private readonly Action<string> logWarning;
@@ -279,10 +284,11 @@ namespace VizzyGPT.Runtime.Ui
             this.logWarning = logWarning ?? throw new ArgumentNullException(nameof(logWarning));
         }
 
-        public static BundledCjkFontProvider CreateDefault()
+        public static BundledCjkFontProvider CreateDefault(
+            Func<string, Font?> loadFont)
         {
             return new BundledCjkFontProvider(
-                new UnityBundledCjkFontBackend(),
+                new UnityBundledCjkFontBackend(loadFont),
                 message => Debug.LogWarning(message));
         }
 
@@ -296,7 +302,7 @@ namespace VizzyGPT.Runtime.Ui
             attempted = true;
             try
             {
-                var source = backend.LoadSourceFont(ResourcePath);
+                var source = backend.LoadSourceFont(FontAssetPath);
                 if (source != null)
                 {
                     resolvedAsset = backend.CreateDynamicFontAsset(source);
@@ -340,9 +346,16 @@ namespace VizzyGPT.Runtime.Ui
 
     public sealed class UnityBundledCjkFontBackend : IBundledCjkFontBackend
     {
-        public Font? LoadSourceFont(string resourcePath)
+        private readonly Func<string, Font?> loadFont;
+
+        public UnityBundledCjkFontBackend(Func<string, Font?> loadFont)
         {
-            return Resources.Load<Font>(resourcePath);
+            this.loadFont = loadFont ?? throw new ArgumentNullException(nameof(loadFont));
+        }
+
+        public Font? LoadSourceFont(string assetPath)
+        {
+            return loadFont(assetPath);
         }
 
         public TMP_FontAsset? CreateDynamicFontAsset(Font source)
@@ -393,29 +406,56 @@ git commit -m "fix: load Chinese font from mod resources"
 ### Task 3: Wire The Bundled Provider Into The Mod Lifecycle
 
 **Files:**
+- Modify: `unity/VizzyGPT/Assets/Scripts/Mod.cs`
+- Modify: `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptMod.cs`
 - Modify: `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptBehaviour.cs`
+- Modify: `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptBootstrapTests.cs`
 - Modify: `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptUiLifecycleTests.cs`
 
 **Interfaces:**
-- Consumes `BundledCjkFontProvider.CreateDefault()`.
+- `Assets.Scripts.Mod.OnModInitialized()` supplies
+  `path => Mod.Instance.ResourceLoader.LoadAsset<Font>(path)`.
+- `VizzyGptMod.EnsureInitialized(Func<string, Font?> loadFont)` carries that
+  delegate across the Assembly-CSharp boundary.
+- `VizzyGptBehaviour.InitializeFontLoader(Func<string, Font?> loadFont)`
+  creates the provider explicitly after the component is added.
 - Preserves existing `panel.Bind(IXmlLayout, TMP_FontAsset?)`.
 - Preserves existing `dialog.Bind(IXmlLayout, PreviewDialogModel, TMP_FontAsset?)`.
 
 - [ ] **Step 1: Update lifecycle test expectations first**
 
-Add a source contract assertion that the behavior creates the bundled provider
-and no longer references the system provider:
+Add source contract assertions for every link in the injection chain:
 
 ```csharp
 [Test]
-public void Behaviour_owns_the_bundled_CJK_provider()
+public void Mod_bootstrap_injects_its_resource_loader_into_runtime()
+{
+    var source = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Mod.cs"));
+
+    Assert.That(source, Does.Contain("VizzyGptMod.EnsureInitialized("));
+    Assert.That(source, Does.Contain("Mod.Instance.ResourceLoader.LoadAsset<Font>"));
+}
+
+[Test]
+public void Runtime_bootstrap_passes_the_loader_to_the_behaviour_instance()
 {
     var source = File.ReadAllText(
-        Path.Combine(
-            Application.dataPath,
-            "VizzyGPT/Runtime/VizzyGptBehaviour.cs"));
+        Path.Combine(Application.dataPath, "VizzyGPT/Runtime/VizzyGptMod.cs"));
 
-    Assert.That(source, Does.Contain("BundledCjkFontProvider.CreateDefault()"));
+    Assert.That(source, Does.Contain("EnsureInitialized(Func<string, Font?> loadFont)"));
+    Assert.That(source, Does.Contain("InitializeFontLoader(loadFont)"));
+    Assert.That(source, Does.Not.Contain("Assets.Scripts"));
+}
+
+[Test]
+public void Behaviour_owns_the_bundled_CJK_provider_without_referencing_the_mod_entrypoint()
+{
+    var source = File.ReadAllText(
+        Path.Combine(Application.dataPath, "VizzyGPT/Runtime/VizzyGptBehaviour.cs"));
+
+    Assert.That(source, Does.Contain("InitializeFontLoader(Func<string, Font?> loadFont)"));
+    Assert.That(source, Does.Contain("BundledCjkFontProvider.CreateDefault(loadFont)"));
+    Assert.That(source, Does.Not.Contain("Assets.Scripts"));
     Assert.That(source, Does.Not.Contain("SystemCjkFontProvider"));
 }
 ```
@@ -426,15 +466,48 @@ Expected: failure because the behavior still names `SystemCjkFontProvider`.
 
 - [ ] **Step 3: Replace lifecycle ownership**
 
-Change the provider field and construction:
+Change the Assembly-CSharp mod entrypoint:
 
 ```csharp
-private BundledCjkFontProvider? cjkFontProvider;
-
-private void Awake()
+protected override void OnModInitialized()
 {
-    cjkFontProvider = BundledCjkFontProvider.CreateDefault();
-    // Existing initialization remains unchanged.
+    VizzyGptMod.EnsureInitialized(
+        path => Mod.Instance.ResourceLoader.LoadAsset<Font>(path));
+}
+```
+
+Change the Runtime bootstrap to require and forward the delegate:
+
+```csharp
+public static void EnsureInitialized(Func<string, Font?> loadFont)
+{
+    if (loadFont == null) throw new ArgumentNullException(nameof(loadFont));
+    if (_behaviour != null)
+    {
+        return;
+    }
+
+    var root = new GameObject("VizzyGPT");
+    if (Application.isPlaying)
+    {
+        Object.DontDestroyOnLoad(root);
+    }
+
+    _behaviour = root.AddComponent<VizzyGptBehaviour>();
+    _behaviour.InitializeFontLoader(loadFont);
+}
+```
+
+Remove parameterless initialization paths that cannot supply the mod
+ResourceLoader. In `VizzyGptBehaviour`, remove provider creation from
+`Awake` and add explicit instance initialization:
+
+```csharp
+public void InitializeFontLoader(Func<string, Font?> loadFont)
+{
+    if (loadFont == null) throw new ArgumentNullException(nameof(loadFont));
+    cjkFontProvider?.Dispose();
+    cjkFontProvider = BundledCjkFontProvider.CreateDefault(loadFont);
 }
 ```
 
@@ -448,7 +521,10 @@ Expected: all pass and static-label assertions remain green.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptBehaviour.cs `
+git add unity/VizzyGPT/Assets/Scripts/Mod.cs `
+  unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptMod.cs `
+  unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptBehaviour.cs `
+  unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptBootstrapTests.cs `
   unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptUiLifecycleTests.cs
 git commit -m "fix: use bundled font in VizzyGPT lifecycle"
 ```
