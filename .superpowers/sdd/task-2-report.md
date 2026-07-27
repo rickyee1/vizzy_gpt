@@ -1,42 +1,39 @@
-# Task 2 Review-Fix Report
+# Bundled CJK Font Task 2 Report
 
-## Changes
+## Scope
 
-- `CanonicalXml` now removes whitespace-only text only when an element has child elements and no significant mixed text. Whitespace is preserved between child elements when the containing element also has non-whitespace text.
-- `FindByPath` now accepts only absolute indexed paths with exactly one leading slash, no empty or trailing segments, canonical non-negative indices, and an indexed root segment.
-- Added regression coverage for mixed-content whitespace, relative/doubled/trailing paths, malformed indexes, sibling index selection, out-of-range indexes, and a known lowercase UTF-8 SHA-256 value.
+- Added `BundledCjkFontProvider` and `UnityBundledCjkFontBackend`.
+- Added provider behavior tests for one-time loading/caching, one-time failure
+  warning, and disposal that releases only the runtime TMP asset.
+- Retained `SystemCjkFontProvider` and its EditMode tests temporarily so the
+  untouched lifecycle code continues to compile. Task 3 will remove them after
+  it changes the lifecycle dependency.
+- Did not modify `Mod.cs`, `VizzyGptMod.cs`, or `VizzyGptBehaviour.cs`.
 
-## Fixture Integrity
+## RED
 
-`nested.xml` was recreated from `UserData/FlightPrograms/unsdeady FC 2modes.xml` using a byte-level replacement of only `name="unsdeady FC 2modes"` with `name="NestedFixture"`.
-
-- XML parser validation: source and target roots are non-namespaced `Program`; source name is `unsdeady FC 2modes`; target name is `NestedFixture`.
-- The old root-name byte sequence occurred exactly once at offset `52`; the replacement byte sequence occurs exactly once at the same offset.
-- Source length: `4054` bytes. Target length: `4049` bytes, matching the five-byte name-length difference.
-- Prefix and suffix byte comparisons passed after accounting for that length difference.
-- Source SHA-256: `10f1e84228ef6e971bea48c42af9b8742c1525ca2408b154f0238930b34ae8ff`.
-- Target SHA-256: `bad12470f17b1cec7695f8fa6deaa4dd7c1e038786b4e6681119ab95d43e5ebe`.
-
-The original user fixture was read only and was not modified.
-
-## Static Checks
-
-- `git diff --check`: completed with no whitespace errors.
-- Static review: changes remain C# 9-compatible, preserve ordinal XML/path comparisons, and are limited to the Task 2 review findings.
-
-## GREEN Verification
-
-After the platform quota reset, the controller ran the complete suite in an approved non-sandbox shell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/Test-Core.ps1
-```
-
-Result:
+Focused Unity EditMode invocation for
+`VizzyGPT.Tests.EditMode.BundledCjkFontProviderTests` failed before production
+code was added. Unity did not produce a result XML because compilation failed.
 
 ```text
-Build succeeded: 0 warnings, 0 errors.
-Tests: failed 0, passed 17, skipped 0, total 17.
+Assets\\VizzyGPT\\Tests\\EditMode\\BundledCjkFontProviderTests.cs(136,58):
+error CS0246: The type or namespace name 'IBundledCjkFontBackend' could not be
+found (are you missing a using directive or an assembly reference?)
 ```
 
-The working tree remained clean after the run. The earlier test-first files establish the intended RED boundary, but executable RED was not captured because the platform quota blocked the pre-implementation run.
+This is the expected RED boundary: the behavior tests referenced the absent
+provider backend interface.
+
+Test count: 0/7 executed because Unity stopped at the expected compilation
+error before it could run the 3 new behavior tests and 4 resource tests.
+
+## GREEN
+
+Focused Unity EditMode verification passed after restoring the legacy provider
+files. Their deletion is intentionally deferred to Task 3, when
+`VizzyGptBehaviour` switches to the bundled provider.
+
+```text
+VizzyGPT.Tests.EditMode.BundledCjkFontProviderTests: 7/7 passed, 0 failed.
+```
