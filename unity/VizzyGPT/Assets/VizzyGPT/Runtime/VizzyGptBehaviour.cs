@@ -38,24 +38,37 @@ namespace VizzyGPT.Runtime
         private PreviewDialogController? mountedPreview;
         private SettingsDialogViewController? mountedSettings;
         private FlightContextCollector? flightContextCollector;
-        private SystemCjkFontProvider? cjkFontProvider;
+        private BundledCjkFontProvider? cjkFontProvider;
         private TMP_FontAsset? cjkFont;
         private string? activeUserInterfaceId;
+        private bool initialized;
 
         private void Awake()
         {
-            cjkFontProvider = SystemCjkFontProvider.CreateDefault();
+        }
+
+        public void Initialize(Func<string, Font?> loadFont)
+        {
+            if (loadFont == null) throw new ArgumentNullException(nameof(loadFont));
+            if (initialized)
+            {
+                return;
+            }
+
+            cjkFontProvider = BundledCjkFontProvider.CreateDefault(loadFont);
             userInterface = Game.Instance == null ? null : Game.Instance.UserInterface;
             store = new FileDataStore(JunoDataPaths.Root);
             openAiClient = new OpenAiClient(new UnityWebRequestTransport());
             LoadSavedSettingsAsync();
             if (userInterface == null)
             {
+                initialized = true;
                 return;
             }
 
             userInterface.UserInterfaceLoading += OnUserInterfaceLoading;
             userInterface.UserInterfaceLoaded += OnUserInterfaceLoaded;
+            initialized = true;
         }
 
         public static bool IsSupportedUserInterfaceId(string userInterfaceId)
@@ -438,6 +451,7 @@ namespace VizzyGPT.Runtime
             cjkFontProvider = null;
             cjkFont = null;
             activeUserInterfaceId = null;
+            initialized = false;
         }
     }
 }

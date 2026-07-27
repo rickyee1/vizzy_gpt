@@ -1,41 +1,66 @@
-# Task 3 CJK Integration Report
+# Bundled CJK Font Task 3 Report
 
-## Scope Implemented
+## Scope
 
-- `unity/VizzyGPT/Assets/VizzyGPT/Runtime/VizzyGptBehaviour.cs`
-  - Creates one `SystemCjkFontProvider` in `Awake`.
-  - Resolves one `TMP_FontAsset` while mounting the panel and reuses that asset for preview dialogs.
-  - Disposes and clears the provider in `OnDestroy`.
-- `unity/VizzyGPT/Assets/VizzyGPT/Runtime/Ui/VizzyGptPanelController.cs`
-  - Adds nullable `TMP_FontAsset` support to `Bind`.
-  - Applies the font to the prompt input, transcript, and status only.
-- `unity/VizzyGPT/Assets/VizzyGPT/Runtime/Ui/PreviewDialogController.cs`
-  - Adds nullable `TMP_FontAsset` support to `Bind`.
-  - Applies the font to summary, added, changed, removed, and warnings only.
-- `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/VizzyGptUiLifecycleTests.cs`
-  - Adds a map-backed `FakeXmlLayout` and panel binding coverage for the three dynamic targets plus an unchanged button label.
-- `unity/VizzyGPT/Assets/VizzyGPT/Tests/EditMode/PreviewDialogControllerTests.cs`
-  - Adds a map-backed `FakeXmlLayout` and preview binding coverage for the five dynamic targets plus an unchanged button label.
-- `docs/manual-test-checklist.md`
-  - Adds the five Chinese-rendering manual acceptance checks as pending.
+- `Assets.Scripts.Mod.OnModInitialized` injects the mod resource loader through
+  `path => global::Assets.Scripts.Mod.Instance.ResourceLoader.LoadAsset<Font>(path)`.
+- `VizzyGptMod.EnsureInitialized(Func<string, Font?>)` now owns only the
+  delegate-based bootstrap path. It creates the root, adds the behaviour, then
+  calls `Initialize(loadFont)`.
+- `VizzyGptBehaviour.Awake` is intentionally empty. Its explicit, idempotent
+  `Initialize(Func<string, Font?>)` creates the `BundledCjkFontProvider`
+  first, then performs all UI, storage, API, settings, and event-subscription
+  setup that previously ran in `Awake`.
+- The existing panel and preview binding scope remains unchanged. The bundled
+  provider is resolved for panel mounting, reused for previews, and disposed in
+  `OnDestroy`.
+- Deleted `SystemCjkFontProvider`, its EditMode tests, and both `.meta` files
+  after all Runtime references had moved to the bundled provider.
 
 ## TDD Evidence
 
-The two controller tests were written before the production integration. They call the new nullable `Bind` overloads and assert font identity for every required dynamic target and non-identity for representative static button labels.
+### RED
 
-The RED and GREEN Unity runner executions were not performed in this task because the controller owns the escalated Unity/Core test run and the instruction explicitly prohibits launching Unity or Juno. This is a verification deferral, not a passing-test claim.
+Added lifecycle/source-contract coverage in:
+
+- `VizzyGptBootstrapTests.cs`: mod delegate contract, Runtime loader forwarding,
+  and injected bootstrap ownership.
+- `VizzyGptUiLifecycleTests.cs`: object-level `GameObject`/`AddComponent`
+  lifecycle coverage proving no runtime setup precedes injection, provider
+  ownership after `EnsureInitialized`, provider identity across duplicate
+  initialization, and provider disposal on destruction.
+
+The first executable RED result was:
+
+```text
+Unity EditMode: 77 passed, 5 failed, 82 total.
+```
+
+The five failures were the expected missing explicit `Initialize` chain,
+missing `initialized` lifecycle state, `Awake`-before-injection setup, and
+the cleanup assertion that the review refactor corrects.
+
+### GREEN
+
+```text
+powershell -ExecutionPolicy Bypass -File tools\Test-Unity.ps1
+Unity EditMode tests passed: 82/82
+```
+
+The full suite passed after the lifecycle refactor and the focused EditMode
+harness corrections. The object-level tests now cover initialization ordering,
+provider identity across duplicate `EnsureInitialized` calls, and `OnDestroy`
+provider disposal; source assertions remain limited to the generated mod
+ResourceLoader boundary.
 
 ## Static Checks
 
-- `git diff --check` exited `0` with no whitespace errors. Git emitted existing CRLF conversion warnings for modified text files.
-- Static source inspection confirms `CjkTextFontApplicator` is called only for prompt input, transcript, status, summary, added, changed, removed, and warnings.
-- Settings fields and static labels/buttons have no new font application code.
-
-## Deferred Runtime Verification
-
-The controller must run the following before marking the manual items complete:
-
-1. `powershell -ExecutionPolicy Bypass -File tools\Test-Unity.ps1`
-2. `powershell -ExecutionPolicy Bypass -File tools\Test-Core.ps1`
-3. Build and install `Mods\VizzyGPT.sr2-mod`, then record its size, timestamp, and SHA-256.
-4. Perform the five pending Juno Chinese-rendering acceptance checks and inspect `Player.log` for duplicate font warnings.
+- `git diff --check`: no whitespace errors. Git reported only existing CRLF
+  conversion notices.
+- Runtime source search found no `Assets.Scripts`, `Assembly-CSharp`, or
+  `SystemCjkFontProvider` references.
+- Confirmed all four deleted legacy provider/test source and `.meta` files are
+  absent.
+- The pre-existing CRLF-only changes in `Packages/manifest.json` and
+  `Packages/packages-lock.json` remain unstaged and are excluded from the Task
+  3 commit.

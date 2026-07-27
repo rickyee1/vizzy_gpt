@@ -31,7 +31,8 @@ namespace Assets.Scripts
         /// <inheritdoc />
         protected override void OnModInitialized()
         {
-            VizzyGptMod.EnsureInitialized();
+            VizzyGptMod.EnsureInitialized(
+                path => global::Assets.Scripts.Mod.Instance.ResourceLoader.LoadAsset<Font>(path));
         }
     }
 }

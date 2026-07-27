@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
@@ -30,6 +31,10 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Generated_mod_entry_creates_one_lifecycle_owner()
         {
+            var previousIgnoreFailingMessages = UnityEngine.TestTools.LogAssert.ignoreFailingMessages;
+            UnityEngine.TestTools.LogAssert.ignoreFailingMessages = true;
+            try
+            {
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
             var rootModType = assemblies.Select(assembly => assembly.GetType("Assets.Scripts.Mod"))
                 .First(type => type != null);
@@ -42,16 +47,19 @@ namespace VizzyGPT.Tests.EditMode
             var initialize = rootModType.GetMethod(
                 "OnModInitialized",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-            var runtimeInitialize = runtimeModType.GetMethod(
-                "OnModInitialized",
-                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
 
             Assert.That(initialize, Is.Not.Null, "The builder-generated root Mod must forward initialization.");
-            Assert.That(runtimeInitialize, Is.Not.Null);
 
-            initialize.Invoke(instance, null);
-            runtimeInitialize.Invoke(Activator.CreateInstance(runtimeModType), null);
-            initialize.Invoke(instance, null);
+            var runtimeEnsureInitialized = runtimeModType.GetMethod(
+                "EnsureInitialized",
+                BindingFlags.Public | BindingFlags.Static);
+
+            Assert.That(runtimeEnsureInitialized, Is.Not.Null);
+            Assert.That(runtimeEnsureInitialized.GetParameters(), Has.Length.EqualTo(1));
+
+            var loadFont = new Func<string, Font>(_ => null);
+            runtimeEnsureInitialized.Invoke(null, new object[] { loadFont });
+            runtimeEnsureInitialized.Invoke(null, new object[] { loadFont });
 
             var roots = Resources.FindObjectsOfTypeAll<GameObject>()
                 .Where(gameObject => gameObject.name == "VizzyGPT" && gameObject.GetComponent(behaviourType) != null)
@@ -67,6 +75,31 @@ namespace VizzyGPT.Tests.EditMode
                     UnityEngine.Object.DestroyImmediate(root);
                 }
             }
+            }
+            finally
+            {
+                UnityEngine.TestTools.LogAssert.ignoreFailingMessages = previousIgnoreFailingMessages;
+            }
+        }
+
+        [Test]
+        public void Mod_bootstrap_injects_its_resource_loader_into_runtime()
+        {
+            var source = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Mod.cs"));
+
+            Assert.That(source, Does.Contain("VizzyGptMod.EnsureInitialized("));
+            Assert.That(source, Does.Contain("Mod.Instance.ResourceLoader.LoadAsset<Font>"));
+        }
+
+        [Test]
+        public void Runtime_bootstrap_passes_the_loader_to_the_behaviour_instance()
+        {
+            var source = File.ReadAllText(
+                Path.Combine(Application.dataPath, "VizzyGPT/Runtime/VizzyGptMod.cs"));
+
+            Assert.That(source, Does.Contain("EnsureInitialized(Func<string, Font?> loadFont)"));
+            Assert.That(source, Does.Contain("Initialize(loadFont)"));
+            Assert.That(source, Does.Not.Contain("Assets.Scripts"));
         }
     }
 }

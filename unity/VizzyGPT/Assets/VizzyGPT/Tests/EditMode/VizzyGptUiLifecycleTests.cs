@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
 using ModApi.Ui;
 using NUnit.Framework;
 using System.Threading.Tasks;
@@ -15,6 +18,18 @@ namespace VizzyGPT.Tests.EditMode
 {
     public sealed class VizzyGptUiLifecycleTests
     {
+        [SetUp]
+        public void SetUp()
+        {
+            DestroyRuntimeRoots();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            DestroyRuntimeRoots();
+        }
+
         [Test]
         public void Staged_panel_mount_is_limited_to_vizzy_and_flight_scene_ui_ids()
         {
@@ -66,6 +81,122 @@ namespace VizzyGPT.Tests.EditMode
 
             Assert.That(ready, Is.True);
             Assert.That(reads, Is.EqualTo(3));
+        }
+
+        [Test]
+        public void Behaviour_owns_the_bundled_CJK_provider_without_referencing_the_mod_entrypoint()
+        {
+            var source = File.ReadAllText(
+                Path.Combine(Application.dataPath, "VizzyGPT/Runtime/VizzyGptBehaviour.cs"));
+            var providerSetup = source.IndexOf(
+                "cjkFontProvider = BundledCjkFontProvider.CreateDefault(loadFont)",
+                StringComparison.Ordinal);
+            var gameSetup = source.IndexOf(
+                "userInterface = Game.Instance == null ? null : Game.Instance.UserInterface",
+                StringComparison.Ordinal);
+            var storeSetup = source.IndexOf("store = new FileDataStore", StringComparison.Ordinal);
+            var clientSetup = source.IndexOf("openAiClient = new OpenAiClient", StringComparison.Ordinal);
+            var settingsSetup = source.IndexOf("LoadSavedSettingsAsync()", StringComparison.Ordinal);
+            var subscription = source.IndexOf(
+                "userInterface.UserInterfaceLoading += OnUserInterfaceLoading",
+                StringComparison.Ordinal);
+
+            Assert.That(source, Does.Contain("Initialize(Func<string, Font?> loadFont)"));
+            Assert.That(source, Does.Contain("BundledCjkFontProvider.CreateDefault(loadFont)"));
+            Assert.That(source, Does.Not.Contain("Assets.Scripts"));
+            Assert.That(source, Does.Not.Contain("SystemCjkFontProvider"));
+            Assert.That(providerSetup, Is.GreaterThanOrEqualTo(0));
+            Assert.That(providerSetup, Is.LessThan(gameSetup));
+            Assert.That(gameSetup, Is.LessThan(storeSetup));
+            Assert.That(storeSetup, Is.LessThan(clientSetup));
+            Assert.That(clientSetup, Is.LessThan(settingsSetup));
+            Assert.That(settingsSetup, Is.LessThan(subscription));
+        }
+
+        [Test]
+        public void AddComponent_does_not_initialize_runtime_state_before_loader_injection()
+        {
+            var root = new GameObject("uninitialized-vizzy-gpt");
+            try
+            {
+                var behaviour = root.AddComponent<VizzyGptBehaviour>();
+
+                Assert.That(GetPrivateField(behaviour, "cjkFontProvider"), Is.Null);
+                Assert.That(GetPrivateField(behaviour, "store"), Is.Null);
+                Assert.That(GetPrivateField(behaviour, "openAiClient"), Is.Null);
+                Assert.That(GetPrivateBool(behaviour, "initialized"), Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void EnsureInitialized_creates_provider_before_marking_runtime_initialized()
+        {
+            VizzyGptMod.EnsureInitialized(_ => null);
+
+            var behaviour = FindRuntimeBehaviour();
+
+            Assert.That(
+                GetPrivateField(behaviour, "cjkFontProvider"),
+                Is.TypeOf<BundledCjkFontProvider>());
+            Assert.That(GetPrivateField(behaviour, "store"), Is.Not.Null);
+            Assert.That(GetPrivateField(behaviour, "openAiClient"), Is.Not.Null);
+            Assert.That(GetPrivateBool(behaviour, "initialized"), Is.True);
+        }
+
+        [Test]
+        public void Duplicate_EnsureInitialized_keeps_first_provider_and_loader_path()
+        {
+            var firstLoadCount = 0;
+            var secondLoadCount = 0;
+            VizzyGptMod.EnsureInitialized(_ =>
+            {
+                firstLoadCount++;
+                return null;
+            });
+            var firstBehaviour = FindRuntimeBehaviour();
+            var firstProvider = (BundledCjkFontProvider)GetPrivateField(
+                firstBehaviour,
+                "cjkFontProvider")!;
+
+            VizzyGptMod.EnsureInitialized(_ =>
+            {
+                secondLoadCount++;
+                return null;
+            });
+            var secondBehaviour = FindRuntimeBehaviour();
+            var secondProvider = (BundledCjkFontProvider)GetPrivateField(
+                secondBehaviour,
+                "cjkFontProvider")!;
+            secondProvider.Resolve();
+
+            Assert.That(secondBehaviour, Is.SameAs(firstBehaviour));
+            Assert.That(secondProvider, Is.SameAs(firstProvider));
+            Assert.That(firstLoadCount, Is.EqualTo(1));
+            Assert.That(secondLoadCount, Is.Zero);
+        }
+
+        [Test]
+        public void Destroying_runtime_behaviour_disposes_its_provider()
+        {
+            var root = new GameObject("destroyable-vizzy-gpt");
+            var behaviour = root.AddComponent<VizzyGptBehaviour>();
+            behaviour.Initialize(_ => null);
+            var provider = (BundledCjkFontProvider)GetPrivateField(behaviour, "cjkFontProvider")!;
+
+            try
+            {
+                GetPrivateMethod(behaviour, "OnDestroy").Invoke(behaviour, null);
+
+                Assert.That(GetPrivateBool(provider, "disposed"), Is.True);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
         }
 
         [Test]
@@ -129,6 +260,47 @@ namespace VizzyGPT.Tests.EditMode
             var component = new GameObject(name, typeof(RectTransform)).AddComponent<T>();
             component.transform.SetParent(parent);
             return component;
+        }
+
+        private static VizzyGptBehaviour FindRuntimeBehaviour()
+        {
+            return Resources.FindObjectsOfTypeAll<VizzyGptBehaviour>()
+                .Single(behaviour => behaviour.gameObject.name == "VizzyGPT");
+        }
+
+        private static object? GetPrivateField(object instance, string fieldName)
+        {
+            var field = instance.GetType().GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, $"Missing private field '{fieldName}'.");
+            return field!.GetValue(instance);
+        }
+
+        private static bool GetPrivateBool(object instance, string fieldName)
+        {
+            return (bool)GetPrivateField(instance, fieldName)!;
+        }
+
+        private static MethodInfo GetPrivateMethod(object instance, string methodName)
+        {
+            var method = instance.GetType().GetMethod(
+                methodName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, $"Missing private method '{methodName}'.");
+            return method!;
+        }
+
+        private static void DestroyRuntimeRoots()
+        {
+            var roots = Resources.FindObjectsOfTypeAll<VizzyGptBehaviour>()
+                .Where(behaviour => behaviour.gameObject.name == "VizzyGPT")
+                .Select(behaviour => behaviour.gameObject)
+                .ToArray();
+            foreach (var root in roots)
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
         }
 
         private sealed class TestTmpText : TMP_Text

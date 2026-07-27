@@ -1,19 +1,17 @@
-using Jundroo.ModTools;
+#nullable enable
+
+using System;
 using UnityEngine;
 
 namespace VizzyGPT.Runtime
 {
-    public sealed class VizzyGptMod : GameModBase
+    public static class VizzyGptMod
     {
-        private static VizzyGptBehaviour _behaviour;
+        private static VizzyGptBehaviour? _behaviour;
 
-        protected override void OnModInitialized()
+        public static void EnsureInitialized(Func<string, Font?> loadFont)
         {
-            EnsureInitialized();
-        }
-
-        public static void EnsureInitialized()
-        {
+            if (loadFont == null) throw new ArgumentNullException(nameof(loadFont));
             if (_behaviour != null)
             {
                 return;
@@ -22,10 +20,11 @@ namespace VizzyGPT.Runtime
             var root = new GameObject("VizzyGPT");
             if (Application.isPlaying)
             {
-                Object.DontDestroyOnLoad(root);
+                UnityEngine.Object.DontDestroyOnLoad(root);
             }
 
             _behaviour = root.AddComponent<VizzyGptBehaviour>();
+            _behaviour.Initialize(loadFont);
         }
     }
 }
