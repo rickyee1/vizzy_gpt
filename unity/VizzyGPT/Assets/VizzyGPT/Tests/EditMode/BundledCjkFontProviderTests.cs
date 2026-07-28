@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -20,6 +21,7 @@ namespace VizzyGPT.Tests.EditMode
         private const string FontAssetGuid = "42a32e345f8e70148801e80491313a76";
         private const string FontAssetPath =
             "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf";
+        private const string GlyphProbe = "你好，请解释当前程序。中文回复预览";
         private const string LicenseAssetGuid = "8284231862185744b9b188ecf2e9967f";
         private const string LicenseAssetPath =
             "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/OFL.txt";
@@ -41,12 +43,72 @@ namespace VizzyGPT.Tests.EditMode
             var source = new Font();
             var expected = ScriptableObject.CreateInstance<TMP_FontAsset>();
             var backend = CreateBackend(source, expected);
-            var provider = new BundledCjkFontProvider(backend, _ => { });
+            var logs = new List<string>();
+            var provider = new BundledCjkFontProvider(backend, _ => { }, logs.Add);
 
             Assert.That(provider.Resolve(), Is.SameAs(expected));
             Assert.That(provider.Resolve(), Is.SameAs(expected));
             Assert.That(backend.LoadedPaths, Is.EqualTo(new[] { FontAssetPath }));
             Assert.That(backend.CreateCount, Is.EqualTo(1));
+            Assert.That(backend.AddedCharacters, Is.EqualTo(new[] { GlyphProbe }));
+            Assert.That(logs, Is.EqualTo(new[] { "VizzyGPT bundled CJK font glyph validation succeeded." }));
+        }
+
+        [Test]
+        public void Resolve_rejects_and_releases_asset_when_glyph_insertion_returns_false()
+        {
+            var warnings = new List<string>();
+            var source = new Font();
+            var asset = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var backend = CreateBackend(source, asset, glyphValidationSucceeds: false);
+            var provider = new BundledCjkFontProvider(backend, warnings.Add);
+
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(backend.LoadedPaths, Is.EqualTo(new[] { FontAssetPath }));
+            Assert.That(backend.CreateCount, Is.EqualTo(1));
+            Assert.That(backend.AddedCharacters, Is.EqualTo(new[] { GlyphProbe }));
+            Assert.That(backend.ReleasedAssets, Is.EqualTo(new[] { asset }));
+            Assert.That(
+                warnings,
+                Is.EqualTo(new[]
+                {
+                    "VizzyGPT bundled CJK font glyph validation failed; Chinese text may appear as missing glyphs.",
+                }));
+        }
+
+        [Test]
+        public void Resolve_rejects_and_releases_asset_when_glyph_insertion_reports_missing_characters()
+        {
+            var warnings = new List<string>();
+            var source = new Font();
+            var asset = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var backend = CreateBackend(source, asset, missingCharacters: "你");
+            var provider = new BundledCjkFontProvider(backend, warnings.Add);
+
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(backend.CreateCount, Is.EqualTo(1));
+            Assert.That(backend.AddedCharacters, Is.EqualTo(new[] { GlyphProbe }));
+            Assert.That(backend.ReleasedAssets, Is.EqualTo(new[] { asset }));
+            Assert.That(warnings, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void Resolve_rejects_and_releases_asset_when_glyph_insertion_throws()
+        {
+            var warnings = new List<string>();
+            var source = new Font();
+            var asset = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var backend = CreateBackend(source, asset, glyphValidationThrows: true);
+            var provider = new BundledCjkFontProvider(backend, warnings.Add);
+
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(provider.Resolve(), Is.Null);
+            Assert.That(backend.CreateCount, Is.EqualTo(1));
+            Assert.That(backend.AddedCharacters, Is.EqualTo(new[] { GlyphProbe }));
+            Assert.That(backend.ReleasedAssets, Is.EqualTo(new[] { asset }));
+            Assert.That(warnings, Has.Count.EqualTo(1));
         }
 
         [Test]
@@ -126,9 +188,19 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(license.text, Does.Contain("SIL OPEN FONT LICENSE Version 1.1"));
         }
 
-        private FakeBundledCjkFontBackend CreateBackend(Font? source, TMP_FontAsset? asset)
+        private FakeBundledCjkFontBackend CreateBackend(
+            Font? source,
+            TMP_FontAsset? asset,
+            bool glyphValidationSucceeds = true,
+            string missingCharacters = "",
+            bool glyphValidationThrows = false)
         {
-            var backend = new FakeBundledCjkFontBackend(source, asset);
+            var backend = new FakeBundledCjkFontBackend(
+                source,
+                asset,
+                glyphValidationSucceeds,
+                missingCharacters,
+                glyphValidationThrows);
             backends.Add(backend);
             return backend;
         }
@@ -137,16 +209,29 @@ namespace VizzyGPT.Tests.EditMode
         {
             private readonly Font? source;
             private readonly TMP_FontAsset? asset;
+            private readonly bool glyphValidationSucceeds;
+            private readonly string missingCharacters;
+            private readonly bool glyphValidationThrows;
 
-            public FakeBundledCjkFontBackend(Font? source, TMP_FontAsset? asset)
+            public FakeBundledCjkFontBackend(
+                Font? source,
+                TMP_FontAsset? asset,
+                bool glyphValidationSucceeds,
+                string missingCharacters,
+                bool glyphValidationThrows)
             {
                 this.source = source;
                 this.asset = asset;
+                this.glyphValidationSucceeds = glyphValidationSucceeds;
+                this.missingCharacters = missingCharacters;
+                this.glyphValidationThrows = glyphValidationThrows;
             }
 
             public List<string> LoadedPaths { get; } = new List<string>();
 
             public int CreateCount { get; private set; }
+
+            public List<string> AddedCharacters { get; } = new List<string>();
 
             public List<TMP_FontAsset> ReleasedAssets { get; } = new List<TMP_FontAsset>();
 
@@ -162,6 +247,21 @@ namespace VizzyGPT.Tests.EditMode
                 return asset;
             }
 
+            public bool TryAddCharacters(
+                TMP_FontAsset fontAsset,
+                string characters,
+                out string missing)
+            {
+                AddedCharacters.Add(characters);
+                missing = missingCharacters;
+                if (glyphValidationThrows)
+                {
+                    throw new InvalidOperationException("Glyph insertion failed.");
+                }
+
+                return glyphValidationSucceeds;
+            }
+
             public void Release(TMP_FontAsset releasedAsset)
             {
                 ReleasedAssets.Add(releasedAsset);
@@ -171,12 +271,12 @@ namespace VizzyGPT.Tests.EditMode
             {
                 if (asset != null)
                 {
-                    Object.DestroyImmediate(asset);
+                    UnityEngine.Object.DestroyImmediate(asset);
                 }
 
                 if (source != null)
                 {
-                    Object.DestroyImmediate(source);
+                    UnityEngine.Object.DestroyImmediate(source);
                 }
             }
         }

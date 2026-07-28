@@ -13,6 +13,8 @@ namespace VizzyGPT.Runtime.Ui
 
         TMP_FontAsset? CreateDynamicFontAsset(Font source);
 
+        bool TryAddCharacters(TMP_FontAsset asset, string characters, out string missing);
+
         void Release(TMP_FontAsset asset);
     }
 
@@ -20,26 +22,31 @@ namespace VizzyGPT.Runtime.Ui
     {
         public const string FontAssetPath =
             "Assets/VizzyGPT/Runtime/Resources/Fonts/VizzyGPT/NotoSansCJKsc-Regular.otf";
+        public const string GlyphProbe = "你好，请解释当前程序。中文回复预览";
 
         private readonly IBundledCjkFontBackend backend;
         private readonly Action<string> logWarning;
+        private readonly Action<string> logInfo;
         private TMP_FontAsset? resolvedAsset;
         private bool attempted;
         private bool disposed;
 
         public BundledCjkFontProvider(
             IBundledCjkFontBackend backend,
-            Action<string> logWarning)
+            Action<string> logWarning,
+            Action<string>? logInfo = null)
         {
             this.backend = backend ?? throw new ArgumentNullException(nameof(backend));
             this.logWarning = logWarning ?? throw new ArgumentNullException(nameof(logWarning));
+            this.logInfo = logInfo ?? (message => Debug.Log(message));
         }
 
         public static BundledCjkFontProvider CreateDefault(Func<string, Font?> loadFont)
         {
             return new BundledCjkFontProvider(
                 new UnityBundledCjkFontBackend(loadFont),
-                message => Debug.LogWarning(message));
+                message => Debug.LogWarning(message),
+                message => Debug.Log(message));
         }
 
         public TMP_FontAsset? Resolve()
@@ -50,32 +57,42 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             attempted = true;
+            TMP_FontAsset? createdAsset = null;
             try
             {
                 var source = backend.LoadSourceFont(FontAssetPath);
                 if (source != null)
                 {
-                    resolvedAsset = backend.CreateDynamicFontAsset(source);
+                    createdAsset = backend.CreateDynamicFontAsset(source);
+                    if (createdAsset != null &&
+                        backend.TryAddCharacters(createdAsset, GlyphProbe, out var missing) &&
+                        string.IsNullOrEmpty(missing))
+                    {
+                        resolvedAsset = createdAsset;
+                        TryLogInfo("VizzyGPT bundled CJK font glyph validation succeeded.");
+                        return resolvedAsset;
+                    }
                 }
             }
             catch
             {
-                resolvedAsset = null;
             }
 
-            if (resolvedAsset == null)
+            if (createdAsset != null)
             {
                 try
                 {
-                    logWarning(
-                        "VizzyGPT could not load its bundled CJK font. Chinese text may appear as missing glyphs.");
+                    backend.Release(createdAsset);
                 }
                 catch
                 {
                 }
             }
 
-            return resolvedAsset;
+            TryLogWarning(
+                "VizzyGPT bundled CJK font glyph validation failed; Chinese text may appear as missing glyphs.");
+
+            return null;
         }
 
         public void Dispose()
@@ -90,6 +107,28 @@ namespace VizzyGPT.Runtime.Ui
             {
                 backend.Release(resolvedAsset);
                 resolvedAsset = null;
+            }
+        }
+
+        private void TryLogInfo(string message)
+        {
+            try
+            {
+                logInfo(message);
+            }
+            catch
+            {
+            }
+        }
+
+        private void TryLogWarning(string message)
+        {
+            try
+            {
+                logWarning(message);
+            }
+            catch
+            {
             }
         }
     }
@@ -126,6 +165,11 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             return asset;
+        }
+
+        public bool TryAddCharacters(TMP_FontAsset asset, string characters, out string missing)
+        {
+            return asset.TryAddCharacters(characters, out missing);
         }
 
         public void Release(TMP_FontAsset asset)
