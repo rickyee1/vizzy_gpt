@@ -6,38 +6,62 @@ namespace VizzyGPT.Runtime.Ui
 {
     public static class CjkTextFontApplicator
     {
-        public static void ApplyToInput(TMP_InputField? input, TMP_FontAsset? font)
+        public static bool ApplyToInput(TMP_InputField? input, TMP_FontAsset? font)
         {
             if (input == null || font == null)
             {
-                return;
+                return false;
             }
 
+            var changed = false;
             if (input.textComponent != null)
             {
-                input.textComponent.font = font;
+                changed |= ApplyToTarget(input.textComponent, font);
             }
 
             if (input.placeholder is TMP_Text placeholder)
             {
-                placeholder.font = font;
+                changed |= ApplyToTarget(placeholder, font);
             }
+
+            return changed;
         }
 
-        public static void ApplyToText(TMP_FontAsset? font, params TMP_Text?[] targets)
+        public static bool ApplyToText(TMP_FontAsset? font, params TMP_Text?[] targets)
         {
             if (font == null)
             {
-                return;
+                return false;
             }
 
+            var changed = false;
             foreach (var target in targets)
             {
                 if (target != null)
                 {
-                    target.font = font;
+                    changed |= ApplyToTarget(target, font);
                 }
             }
+
+            return changed;
+        }
+
+        private static bool ApplyToTarget(TMP_Text target, TMP_FontAsset font)
+        {
+            var material = font.material;
+            if (target.font == font && (material == null || target.fontSharedMaterial == material))
+            {
+                return false;
+            }
+
+            target.font = font;
+            if (material != null)
+            {
+                target.fontSharedMaterial = material;
+            }
+
+            target.SetAllDirty();
+            return true;
         }
     }
 }

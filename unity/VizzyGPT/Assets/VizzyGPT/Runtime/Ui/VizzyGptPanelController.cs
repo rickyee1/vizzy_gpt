@@ -897,6 +897,8 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_InputField? promptInput;
         private TMP_Text? transcriptText;
         private TMP_Text? statusText;
+        private TMP_FontAsset? expectedCjkFont;
+        private TMP_Text?[] dynamicTextTargets = Array.Empty<TMP_Text?>();
         private RectTransform? panelRoot;
         private Button? launcherButton;
         private Button? sendButton;
@@ -944,7 +946,9 @@ namespace VizzyGPT.Runtime.Ui
             modifyToggle = RequireElement<Toggle>(layout, "modify-toggle");
 
             CjkTextFontApplicator.ApplyToInput(promptInput, cjkFont);
-            CjkTextFontApplicator.ApplyToText(cjkFont, transcriptText, statusText);
+            dynamicTextTargets = new[] { transcriptText, statusText };
+            CjkTextFontApplicator.ApplyToText(cjkFont, dynamicTextTargets);
+            expectedCjkFont = cjkFont;
 
             if (promptInput != null)
             {
@@ -959,6 +963,16 @@ namespace VizzyGPT.Runtime.Ui
         public void SetPromptText(string value)
         {
             prompt = value ?? string.Empty;
+        }
+
+        public void RefreshDynamicTextFonts()
+        {
+            var inputChanged = CjkTextFontApplicator.ApplyToInput(promptInput, expectedCjkFont);
+            CjkTextFontApplicator.ApplyToText(expectedCjkFont, dynamicTextTargets);
+            if (inputChanged)
+            {
+                promptInput?.ForceLabelUpdate();
+            }
         }
 
         public void OnOpenPanelButtonClicked()
@@ -1045,6 +1059,8 @@ namespace VizzyGPT.Runtime.Ui
                 statusText.text = state.StatusText;
             }
 
+            CjkTextFontApplicator.ApplyToText(expectedCjkFont, dynamicTextTargets);
+
             if (panelRoot != null)
             {
                 panelRoot.gameObject.SetActive(state.State != VizzyGptPanelState.Closed);
@@ -1092,6 +1108,15 @@ namespace VizzyGPT.Runtime.Ui
         private void OnPromptValueChanged(string value)
         {
             SetPromptText(value);
+            if (CjkTextFontApplicator.ApplyToInput(promptInput, expectedCjkFont))
+            {
+                promptInput?.ForceLabelUpdate();
+            }
+        }
+
+        private void LateUpdate()
+        {
+            RefreshDynamicTextFonts();
         }
 
         private void UnbindInput()
@@ -1118,6 +1143,8 @@ namespace VizzyGPT.Runtime.Ui
             workflow = null;
             openSettings = null;
             openPreview = null;
+            expectedCjkFont = null;
+            dynamicTextTargets = Array.Empty<TMP_Text?>();
         }
     }
 }

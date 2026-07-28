@@ -32,6 +32,7 @@ Plain HTTP is accepted only for loopback hosts. The API key is protected with Wi
 - **Modify** requests a typed patch, validates it locally, and opens a preview before Apply.
 - **Undo** restores the pre-apply program after another validated backup.
 - **Flight Modify** saves a pending change without replacing the running program. Return to Vizzy to rebase, preview, and apply it.
+- Chinese prompt, response, status, and preview text use the bundled Noto Sans CJK SC font.
 
 If the running Juno version does not expose one unambiguous Vizzy editor contract, Ask remains available while Modify and Preview are hidden.
 
@@ -45,4 +46,4 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Unity.ps1
 
 The Unity project is under `unity/VizzyGPT`. Core code and tests are under `src` and `tests`. Manual release coverage is tracked in `docs/manual-test-checklist.md`.
 
-Last updated: 2026-07-23.
+Last updated: 2026-07-29.

@@ -204,6 +204,7 @@ namespace VizzyGPT.Tests.EditMode
         {
             var root = new GameObject("panel-layout", typeof(RectTransform));
             var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var stockFont = ScriptableObject.CreateInstance<TMP_FontAsset>();
             try
             {
                 var promptInput = root.AddComponent<TMP_InputField>();
@@ -240,11 +241,96 @@ namespace VizzyGPT.Tests.EditMode
                 Assert.That(status.font, Is.SameAs(font));
                 Assert.That(askButtonLabel.font, Is.SameAs(originalAskButtonLabelFont));
                 Assert.That(askButtonLabel.font, Is.Not.SameAs(font));
+
+                promptText.font = stockFont;
+                transcript.font = stockFont;
+                status.font = stockFont;
+                promptInput.onValueChanged.Invoke("\u4F60");
+                panel.Render(new VizzyGptPanelRenderState(
+                    VizzyGptPanelMode.Ask,
+                    VizzyGptPanelState.Idle,
+                    "status",
+                    "reply",
+                    true,
+                    false,
+                    false,
+                    false,
+                    true));
+
+                Assert.That(promptText.font, Is.SameAs(font));
+                Assert.That(transcript.font, Is.SameAs(font));
+                Assert.That(status.font, Is.SameAs(font));
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(root);
                 UnityEngine.Object.DestroyImmediate(font);
+                UnityEngine.Object.DestroyImmediate(stockFont);
+            }
+        }
+
+        [Test]
+        public void Panel_can_restore_dynamic_cjk_fonts_after_an_overlay_closes()
+        {
+            var root = new GameObject("panel-layout", typeof(RectTransform));
+            var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var stockFont = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            try
+            {
+                var promptInput = root.AddComponent<TMP_InputField>();
+                var promptText = CreateText(root.transform, "prompt-text");
+                var promptPlaceholder = CreateText(root.transform, "prompt-placeholder");
+                promptInput.textComponent = promptText;
+                promptInput.placeholder = promptPlaceholder;
+                var transcript = CreateText(root.transform, "transcript-text");
+                var status = CreateText(root.transform, "status-text");
+                var layout = new FakeXmlLayout(root, new Dictionary<string, Component>
+                {
+                    ["prompt-input"] = promptInput,
+                    ["transcript-text"] = transcript,
+                    ["status-text"] = status,
+                    ["vizzy-gpt-panel"] = (RectTransform)root.transform,
+                    ["gpt-launcher-button"] = CreateComponent<Button>(root.transform, "gpt-launcher-button"),
+                    ["send-button"] = CreateComponent<Button>(root.transform, "send-button"),
+                    ["cancel-button"] = CreateComponent<Button>(root.transform, "cancel-button"),
+                    ["preview-button"] = CreateComponent<Button>(root.transform, "preview-button"),
+                    ["undo-button"] = CreateComponent<Button>(root.transform, "undo-button"),
+                    ["pending-indicator"] = CreateComponent<Image>(root.transform, "pending-indicator"),
+                    ["ask-toggle"] = CreateComponent<Toggle>(root.transform, "ask-toggle"),
+                    ["modify-toggle"] = CreateComponent<Toggle>(root.transform, "modify-toggle")
+                });
+                var panel = root.AddComponent<VizzyGptPanelController>();
+                panel.Bind(layout, font);
+
+                promptText.font = stockFont;
+                promptPlaceholder.font = stockFont;
+                transcript.font = stockFont;
+                status.font = stockFont;
+
+                panel.RefreshDynamicTextFonts();
+
+                Assert.That(promptText.font, Is.SameAs(font));
+                Assert.That(promptPlaceholder.font, Is.SameAs(font));
+                Assert.That(transcript.font, Is.SameAs(font));
+                Assert.That(status.font, Is.SameAs(font));
+
+                promptText.font = stockFont;
+                promptPlaceholder.font = stockFont;
+                transcript.font = stockFont;
+                status.font = stockFont;
+
+                GetPrivateMethod(panel, "LateUpdate").Invoke(panel, null);
+
+                Assert.That(promptText.font, Is.SameAs(font));
+                Assert.That(promptPlaceholder.font, Is.SameAs(font));
+                Assert.That(transcript.font, Is.SameAs(font));
+                Assert.That(status.font, Is.SameAs(font));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(font);
+                UnityEngine.Object.DestroyImmediate(stockFont);
             }
         }
 

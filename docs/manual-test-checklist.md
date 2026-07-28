@@ -12,7 +12,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Build version 0.1.0 from the final source and install it at `UserData/../Mods/VizzyGPT.sr2-mod`.
 - [x] Restart Juno with VizzyGPT enabled and confirm one successful load line in `ModLoadLog.txt`.
 - [x] Confirm `Player.log` contains no VizzyGPT exception or error in the final package load smoke test.
-- [ ] Record the final package SHA-256 in this file.
+- [x] Record the final package SHA-256 in this file.
 
 ## Settings And Chat
 
@@ -24,12 +24,12 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Chinese Text Rendering
 
-- [ ] Type `浣犲ソ锛岃浠嬬粛褰撳墠 Vizzy 绋嬪簭` in the prompt. Expected: every character is visible.
-- [ ] Send the request and receive a Chinese answer. Expected: transcript text is visible.
-- [ ] Request a Modify patch with a Chinese summary and open Preview. Expected: summary and warning content are visible.
-- [ ] Close and reopen the panel. Expected: no duplicate font warning appears in `Player.log`.
-- [ ] Confirm English labels and buttons retain their existing appearance.
-- Result: not run in this task; live acceptance is deferred to the controller.
+- [x] Type a Chinese request in the prompt. Expected: every character is visible.
+- [x] Send the request and receive a Chinese answer. Expected: transcript text is visible.
+- [x] Request a Modify patch with a Chinese summary and open Preview. Expected: summary and warning content are visible.
+- [x] Close and reopen the panel. Expected: no duplicate font warning appears in `Player.log`.
+- [x] Confirm English labels and buttons retain their existing appearance.
+- Result: passed in Juno 1.4.101.0c with the final installed package.
 
 ## Editor Modify
 
@@ -67,11 +67,11 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `446/446` passed on 2026-07-23.
-- Automated Unity EditMode results: `63/63` passed on 2026-07-23.
+- Automated Core results: `446/446` passed on 2026-07-29.
+- Automated Unity EditMode results: `87/87` passed on 2026-07-29.
 - Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 7/23/2026 3:28:56 AM`.
-- Final package hash: `AC8418964694122C442D18D2F8B1CF60E06EFF00FCF9F25229138E4146197B8D`.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 7/28/2026 5:39:29 PM`.
+- Final package hash: `48ACE2178DFE54D3E1AAB9877672CF10870251F7978B299F95C1A6608CAC7D30`.

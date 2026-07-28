@@ -48,6 +48,7 @@ namespace VizzyGPT.Tests.EditMode
         {
             var root = new GameObject("preview-layout");
             var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
+            var stockFont = ScriptableObject.CreateInstance<TMP_FontAsset>();
             try
             {
                 var summary = CreateText(root.transform, "summary-text");
@@ -76,11 +77,29 @@ namespace VizzyGPT.Tests.EditMode
                 Assert.That(warnings.font, Is.SameAs(font));
                 Assert.That(applyButtonLabel.font, Is.SameAs(originalApplyButtonLabelFont));
                 Assert.That(applyButtonLabel.font, Is.Not.SameAs(font));
+
+                summary.font = stockFont;
+                added.font = stockFont;
+                changed.font = stockFont;
+                removed.font = stockFont;
+                warnings.font = stockFont;
+                var lateUpdate = typeof(PreviewDialogController).GetMethod(
+                    "LateUpdate",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.That(lateUpdate, Is.Not.Null);
+                lateUpdate!.Invoke(controller, Array.Empty<object>());
+
+                Assert.That(summary.font, Is.SameAs(font));
+                Assert.That(added.font, Is.SameAs(font));
+                Assert.That(changed.font, Is.SameAs(font));
+                Assert.That(removed.font, Is.SameAs(font));
+                Assert.That(warnings.font, Is.SameAs(font));
             }
             finally
             {
                 UnityEngine.Object.DestroyImmediate(root);
                 UnityEngine.Object.DestroyImmediate(font);
+                UnityEngine.Object.DestroyImmediate(stockFont);
             }
         }
 

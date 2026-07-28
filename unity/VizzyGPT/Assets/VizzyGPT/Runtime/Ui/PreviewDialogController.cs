@@ -65,6 +65,8 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_Text? changedText;
         private TMP_Text? removedText;
         private TMP_Text? warningsText;
+        private TMP_FontAsset? cjkFont;
+        private TMP_Text?[] dynamicTextTargets = Array.Empty<TMP_Text?>();
 
         public void Configure(VizzyGptPanelWorkflow value, Action closeAction)
         {
@@ -89,13 +91,16 @@ namespace VizzyGPT.Runtime.Ui
             changedText = RequireElement<TMP_Text>(layout, "changed-text");
             removedText = RequireElement<TMP_Text>(layout, "removed-text");
             warningsText = RequireElement<TMP_Text>(layout, "warnings-text");
-            CjkTextFontApplicator.ApplyToText(
-                cjkFont,
+            this.cjkFont = cjkFont;
+            dynamicTextTargets = new[]
+            {
                 summaryText,
                 addedText,
                 changedText,
                 removedText,
-                warningsText);
+                warningsText
+            };
+            CjkTextFontApplicator.ApplyToText(cjkFont, dynamicTextTargets);
             Render(model);
         }
 
@@ -119,6 +124,12 @@ namespace VizzyGPT.Runtime.Ui
             SetText(changedText, model.Changed);
             SetText(removedText, model.Removed);
             SetText(warningsText, model.Warnings);
+            CjkTextFontApplicator.ApplyToText(cjkFont, dynamicTextTargets);
+        }
+
+        private void LateUpdate()
+        {
+            CjkTextFontApplicator.ApplyToText(cjkFont, dynamicTextTargets);
         }
 
         private static void SetText(TMP_Text? target, string value)
@@ -149,6 +160,8 @@ namespace VizzyGPT.Runtime.Ui
         {
             close = null;
             workflow = null;
+            cjkFont = null;
+            dynamicTextTargets = Array.Empty<TMP_Text?>();
         }
     }
 }

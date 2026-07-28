@@ -4,8 +4,8 @@ Date: 2026-07-28
 
 ## Scope
 
-This change tests the TMP dynamic-atlas hypothesis only. It does not change
-`CjkTextFontApplicator` or any UI application path.
+This change validates the bundled TMP dynamic-atlas font through the complete
+panel and preview lifecycles.
 
 `BundledCjkFontProvider` now requires the representative probe
 `你好，请解释当前程序。中文回复预览` to be inserted into the TMP asset before it
@@ -34,10 +34,19 @@ source before the verified run.
 Full Unity EditMode verification:
 
 ```text
-Unity EditMode tests passed: 85/85
+Unity EditMode tests passed: 87/87
 ```
 
 The verified result is in `artifacts/editmode-results.xml`.
+
+## Live Validation
+
+- Chinese prompt text remained visible after focus changes and Send.
+- The Chinese model response rendered in the transcript.
+- A Chinese Modify summary rendered in Preview without missing-glyph boxes.
+- English static labels retained the stock game font.
+- `Player.log` recorded
+  `VizzyGPT bundled CJK font glyph validation succeeded.`
 
 ## Preserved Worktree Changes
 

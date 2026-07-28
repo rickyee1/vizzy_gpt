@@ -345,7 +345,7 @@ namespace VizzyGPT.Runtime
                 "VizzyGPT.Settings",
                 (dialog, layoutController) =>
                 {
-                    dialog.Configure(CreateSettingsController(), LoadSavedSettingsAsync, DestroyMountedSettings);
+                    dialog.Configure(CreateSettingsController(), LoadSavedSettingsAsync, CloseSettingsDialog);
                     dialog.Bind(layoutController.XmlLayout);
                 },
                 userInterface.Transform);
@@ -418,6 +418,12 @@ namespace VizzyGPT.Runtime
                 Destroy(mountedSettings.gameObject);
                 mountedSettings = null;
             }
+        }
+
+        private void CloseSettingsDialog()
+        {
+            DestroyMountedSettings();
+            mountedPanel?.RefreshDynamicTextFonts();
         }
 
         private void DestroyMountedUi()
