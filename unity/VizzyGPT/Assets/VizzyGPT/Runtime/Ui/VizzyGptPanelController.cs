@@ -1,6 +1,8 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +12,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
+using VizzyGPT.Core.Conversations;
+using VizzyGPT.Core.Diagnostics;
 using VizzyGPT.Core.Patching;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Validation;
@@ -158,11 +162,37 @@ namespace VizzyGPT.Runtime.Ui
             bool canPreview,
             bool canUndo,
             bool canModify)
+            : this(
+                mode,
+                state,
+                statusText,
+                transcriptText,
+                Array.Empty<ConversationEntryRenderModel>(),
+                canSend,
+                canCancel,
+                canPreview,
+                canUndo,
+                canModify)
+        {
+        }
+
+        public VizzyGptPanelRenderState(
+            VizzyGptPanelMode mode,
+            VizzyGptPanelState state,
+            string statusText,
+            string transcriptText,
+            IReadOnlyList<ConversationEntryRenderModel> entries,
+            bool canSend,
+            bool canCancel,
+            bool canPreview,
+            bool canUndo,
+            bool canModify)
         {
             Mode = mode;
             State = state;
             StatusText = statusText;
             TranscriptText = transcriptText;
+            Entries = (entries ?? throw new ArgumentNullException(nameof(entries))).ToArray();
             CanSend = canSend;
             CanCancel = canCancel;
             CanPreview = canPreview;
@@ -174,6 +204,7 @@ namespace VizzyGPT.Runtime.Ui
         public VizzyGptPanelState State { get; }
         public string StatusText { get; }
         public string TranscriptText { get; }
+        public IReadOnlyList<ConversationEntryRenderModel> Entries { get; }
         public bool CanSend { get; }
         public bool CanCancel { get; }
         public bool CanPreview { get; }
@@ -192,6 +223,10 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Action<VizzyGptPanelRenderState> render;
         private readonly VizzyGptWorkflowEnvironment environment;
         private readonly RuntimeCompatibilityResult compatibility;
+        private readonly IConversationStore? conversationStore;
+        private readonly List<ConversationMessage> messages = new List<ConversationMessage>();
+        private readonly List<ConversationStageTiming> activeStages = new List<ConversationStageTiming>();
+        private readonly SemaphoreSlim conversationLoadGate = new SemaphoreSlim(1, 1);
 
         private CancellationTokenSource? requestCancellation;
         private ChangeSession? session;
@@ -200,6 +235,14 @@ namespace VizzyGPT.Runtime.Ui
         private bool disposed;
         private bool pendingConflict;
         private string? restoredPendingFingerprint;
+        private ConversationHistory? conversationHistory;
+        private string? loadedHistoryKey;
+        private string? requestedHistoryProgramHash;
+        private bool hasRequestedHistory;
+        private string? activeEntryId;
+        private DateTime requestStartedUtc;
+        private DateTime stageStartedUtc;
+        private RequestStage? activeStage;
 
         public VizzyGptPanelWorkflow(
             IVizzyRuntimeAdapter adapter,
@@ -210,7 +253,8 @@ namespace VizzyGPT.Runtime.Ui
             Func<DateTime> utcNow,
             Action<VizzyGptPanelRenderState> render,
             VizzyGptWorkflowEnvironment? environment = null,
-            RuntimeCompatibilityResult? compatibility = null)
+            RuntimeCompatibilityResult? compatibility = null,
+            IConversationStore? conversationStore = null)
         {
             this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             this.sendAsync = sendAsync ?? throw new ArgumentNullException(nameof(sendAsync));
@@ -222,6 +266,7 @@ namespace VizzyGPT.Runtime.Ui
             this.environment = environment ?? VizzyGptWorkflowEnvironment.CreateDefault();
             this.compatibility = compatibility ??
                 RuntimeCompatibilityResult.Compatible("Injected.Vizzy.FlightProgram");
+            this.conversationStore = conversationStore;
             RenderState();
         }
 
@@ -309,6 +354,7 @@ namespace VizzyGPT.Runtime.Ui
             {
                 Transition(VizzyGptPanelState.Idle, mode == VizzyGptPanelMode.Ask ? "Ask mode." : "Modify mode.");
             }
+            _ = LoadConversationAsync();
         }
 
         public async Task SendPromptAsync(string prompt)
@@ -334,33 +380,72 @@ namespace VizzyGPT.Runtime.Ui
             requestCancellation = cancellation;
             var cancellationToken = cancellation.Token;
             Transition(VizzyGptPanelState.Sending, "Sending request.");
+            BeginRequestEntries(prompt);
 
             try
             {
+                AdvanceStage(RequestStage.ReadingProgram);
                 var requestContext = BuildRequestContext();
-                var response = await sendAsync(createRequest(prompt, requestContext.AiContext), cancellationToken);
+                AdvanceStage(RequestStage.BuildingContext);
+                await EnsureConversationLoadedAsync(requestContext.SourceHash, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!IsCurrentRequest(generation, cancellation))
                 {
                     return;
                 }
-                AppendTranscript(response.Message);
 
                 if (requestContext.Mode == VizzyGptPanelMode.Ask)
                 {
+                    AdvanceStage(RequestStage.WaitingForModel);
+                    var response = await sendAsync(createRequest(prompt, requestContext.AiContext), cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsCurrentRequest(generation, cancellation))
+                    {
+                        return;
+                    }
+
                     session = null;
+                    CompleteAssistantEntry(response, false);
                     Transition(VizzyGptPanelState.Idle, "Response received.");
+                    await PersistConversationAsync();
                     return;
                 }
 
-                if (!TryCreateSession(response, requestContext, out var createdSession, out var error))
+                var attempt = await RunModifyAttemptAsync(prompt, requestContext, null, cancellationToken);
+                if (attempt.Failure != null && attempt.Failure.IsRepairable)
+                {
+                    AdvanceStage(RequestStage.RepairingPatch);
+                    var repairContext = BuildRepairContext(attempt.Failure, requestContext.SourceHash!);
+                    attempt = await RunModifyAttemptAsync(
+                        prompt,
+                        requestContext,
+                        repairContext,
+                        cancellationToken);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrentRequest(generation, cancellation))
+                {
+                    return;
+                }
+
+                if (attempt.Failure != null || attempt.Session == null || attempt.Response == null)
                 {
                     session = null;
-                    Transition(VizzyGptPanelState.Error, error);
+                    CompleteErrorEntry(attempt.Failure ?? new ModifyValidationFailure(
+                        "ModifyFailure",
+                        null,
+                        "The response did not contain an applicable change.",
+                        "Modify attempt completed without a preview session.",
+                        false));
+                    Transition(VizzyGptPanelState.Error, attempt.Failure?.Message ?? "The response did not contain an applicable change.");
+                    await PersistConversationAsync();
                     return;
                 }
 
-                session = createdSession;
+                AdvanceStage(RequestStage.PreparingPreview);
+                session = attempt.Session;
+                CompleteAssistantEntry(attempt.Response, true);
                 if (environment.IsFlight)
                 {
                     var fingerprint = environment.GetProgramFingerprint(requestContext.SourceHash!);
@@ -375,12 +460,16 @@ namespace VizzyGPT.Runtime.Ui
                 {
                     Transition(VizzyGptPanelState.PreviewReady, "Preview ready.");
                 }
+
+                await PersistConversationAsync();
             }
             catch (OperationCanceledException)
             {
                 if (IsCurrentRequest(generation, cancellation))
                 {
+                    CompleteCancelledEntry();
                     Transition(VizzyGptPanelState.Idle, "Request cancelled.");
+                    await PersistConversationAsync();
                 }
             }
             catch (Exception exception)
@@ -388,7 +477,17 @@ namespace VizzyGPT.Runtime.Ui
                 if (IsCurrentRequest(generation, cancellation))
                 {
                     session = null;
-                    Transition(VizzyGptPanelState.Error, exception.Message);
+                    var diagnostic = ExceptionDiagnostic.From(
+                        exception,
+                        activeStage?.ToString() ?? "Request");
+                    CompleteErrorEntry(new ModifyValidationFailure(
+                        diagnostic.Code,
+                        null,
+                        diagnostic.DisplayMessage,
+                        diagnostic.TechnicalDetails,
+                        false));
+                    Transition(VizzyGptPanelState.Error, diagnostic.DisplayMessage);
+                    await PersistConversationAsync();
                 }
             }
             finally
@@ -404,6 +503,28 @@ namespace VizzyGPT.Runtime.Ui
         public void CancelRequest()
         {
             requestCancellation?.Cancel();
+        }
+
+        public void RefreshElapsed()
+        {
+            ThrowIfDisposed();
+            if (State == VizzyGptPanelState.Sending && activeEntryId != null)
+            {
+                RenderState();
+            }
+        }
+
+        public async Task LoadConversationAsync()
+        {
+            ThrowIfDisposed();
+            string? programHash = null;
+            if (Mode == VizzyGptPanelMode.Modify &&
+                TryReadCurrent(out _, out var currentHash, out _))
+            {
+                programHash = currentHash;
+            }
+
+            await EnsureConversationLoadedAsync(programHash, CancellationToken.None);
         }
 
         public async Task RestorePendingAsync()
@@ -528,6 +649,7 @@ namespace VizzyGPT.Runtime.Ui
                 await environment.SavePendingAsync(pending, CancellationToken.None);
                 session = null;
                 Transition(VizzyGptPanelState.Idle, "Pending change saved. Return to Vizzy to apply it.");
+                await PersistConversationAsync();
                 return true;
             }
 
@@ -556,6 +678,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             undoSession = new AppliedChange(session, currentXml);
+            var resultHash = session.ResultHash;
             session = null;
             if (restoredPendingFingerprint != null)
             {
@@ -563,6 +686,8 @@ namespace VizzyGPT.Runtime.Ui
                 restoredPendingFingerprint = null;
             }
             Transition(VizzyGptPanelState.Idle, "Changes applied.");
+            await LinkConversationHashAsync(resultHash);
+            await PersistConversationAsync();
             return true;
         }
 
@@ -613,6 +738,8 @@ namespace VizzyGPT.Runtime.Ui
 
             undoSession = null;
             Transition(VizzyGptPanelState.Idle, "Changes restored.");
+            await LinkConversationHashAsync(applied.Session.BaseHash);
+            await PersistConversationAsync();
             return true;
         }
 
@@ -698,57 +825,425 @@ namespace VizzyGPT.Runtime.Ui
             }
         }
 
-        private bool TryCreateSession(
-            AiResponse response,
-            RequestContext requestContext,
-            out ChangeSession? createdSession,
-            out string error)
+        private async Task<ModifyAttemptResult> RunModifyAttemptAsync(
+            string prompt,
+            RequestContext source,
+            string? repairContext,
+            CancellationToken cancellationToken)
         {
-            createdSession = null;
+            AdvanceStage(RequestStage.WaitingForModel);
+            var context = repairContext == null
+                ? source.AiContext
+                : source.AiContext + "\n\n" + repairContext;
+            var response = await sendAsync(createRequest(prompt, context), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            AdvanceStage(RequestStage.ParsingPatch);
+
             if (!response.CanApply || response.Patch == null)
             {
-                error = "The response did not contain an applicable change.";
-                return false;
+                var details = response.Diagnostics.Count == 0
+                    ? "The model response did not include a patch."
+                    : string.Join("; ", response.Diagnostics);
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        "PatchContract",
+                        null,
+                        "The response did not contain an applicable change.",
+                        SanitizeTechnicalDetails(details, RequestStage.ParsingPatch),
+                        true));
             }
 
-            if (requestContext.SourceDocument == null || requestContext.SourceHash == null)
+            if (source.SourceDocument == null || source.SourceHash == null)
             {
-                error = "Modify mode did not capture an editor program.";
-                return false;
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        "MissingSource",
+                        null,
+                        "Modify mode did not capture an editor program.",
+                        "The captured Modify source document or hash was null.",
+                        false));
             }
 
             if (!TryReadCurrent(out _, out var currentHash, out var readError))
             {
-                error = readError ?? "Unable to read the current Vizzy program.";
-                return false;
+                var safeReadError = SanitizeTechnicalDetails(
+                    readError ?? "Unable to read the current Vizzy program.",
+                    RequestStage.ValidatingPatch);
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        "SourceUnavailable",
+                        null,
+                        safeReadError,
+                        safeReadError,
+                        false));
             }
 
-            if (!string.Equals(currentHash, requestContext.SourceHash, StringComparison.Ordinal))
+            if (!string.Equals(currentHash, source.SourceHash, StringComparison.Ordinal))
             {
-                error = "The Vizzy program changed while the request was in progress.";
-                return false;
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        "StaleSource",
+                        null,
+                        "The Vizzy program changed while the request was in progress.",
+                        "The current program hash no longer matches the captured request source hash.",
+                        false));
             }
 
+            AdvanceStage(RequestStage.ValidatingPatch);
             try
             {
-                var result = VizzyPatchEngine.Apply(requestContext.SourceDocument, response.Patch);
+                var result = VizzyPatchEngine.Apply(source.SourceDocument, response.Patch);
                 var report = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
                     .Validate(result.Document, createCatalog());
                 if (!report.IsValid)
                 {
-                    error = report.Errors[0].Message;
-                    return false;
+                    var issue = report.Errors[0];
+                    var safeMessage = SanitizeTechnicalDetails(
+                        issue.Message,
+                        RequestStage.ValidatingPatch);
+                    return ModifyAttemptResult.Failed(
+                        response,
+                        new ModifyValidationFailure(
+                            issue.Code,
+                            issue.Path,
+                            safeMessage,
+                            safeMessage,
+                            true));
                 }
 
-                createdSession = ChangeSession.Create(requestContext.SourceDocument, response.Patch, result, report);
-                error = string.Empty;
-                return true;
+                return ModifyAttemptResult.Succeeded(
+                    response,
+                    ChangeSession.Create(source.SourceDocument, response.Patch, result, report));
             }
             catch (Exception exception)
             {
-                error = exception.Message;
-                return false;
+                var diagnostic = ExceptionDiagnostic.From(exception, RequestStage.ValidatingPatch.ToString());
+                var code = diagnostic.DisplayMessage.IndexOf("protected", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "ProtectedRoot"
+                    : diagnostic.Code;
+                var path = response.Patch.Operations
+                    .Select(operation => operation.Target?.Path)
+                    .FirstOrDefault(value => value != null);
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        code,
+                        path,
+                        diagnostic.DisplayMessage,
+                        diagnostic.TechnicalDetails,
+                        true));
             }
+        }
+
+        private static string BuildRepairContext(ModifyValidationFailure failure, string originalHash)
+        {
+            return "MODIFY REPAIR\n" +
+                "The previous patch could not be safely previewed.\n" +
+                "Error code: " + failure.Code + "\n" +
+                "Path: " + (failure.Path ?? "root") + "\n" +
+                "Error: " + SanitizeTechnicalDetails(failure.Message, RequestStage.RepairingPatch) + "\n" +
+                "Return a complete replacement patch against original base hash " + originalHash + ".\n" +
+                "Do not add, remove, replace, or move direct Program structural containers.";
+        }
+
+        private static string SanitizeTechnicalDetails(string value, RequestStage stage)
+        {
+            return ExceptionDiagnostic.From(new InvalidOperationException(value), stage.ToString()).DisplayMessage;
+        }
+
+        private void BeginRequestEntries(string prompt)
+        {
+            requestStartedUtc = utcNow();
+            stageStartedUtc = requestStartedUtc;
+            activeStage = null;
+            activeStages.Clear();
+            var mode = ToConversationMode(Mode);
+            messages.Add(new ConversationMessage(
+                Guid.NewGuid().ToString("N"),
+                ConversationRole.User,
+                ConversationMessageKind.Message,
+                mode,
+                prompt,
+                null,
+                Array.Empty<ConversationStageTiming>(),
+                null,
+                null,
+                requestStartedUtc));
+            activeEntryId = Guid.NewGuid().ToString("N");
+            messages.Add(new ConversationMessage(
+                activeEntryId,
+                ConversationRole.Assistant,
+                ConversationMessageKind.Progress,
+                mode,
+                string.Empty,
+                null,
+                Array.Empty<ConversationStageTiming>(),
+                0,
+                null,
+                requestStartedUtc));
+            RenderState();
+        }
+
+        private void AdvanceStage(RequestStage stage)
+        {
+            var now = utcNow();
+            if (activeStage.HasValue)
+            {
+                activeStages.Add(new ConversationStageTiming(
+                    activeStage.Value.ToString(),
+                    Math.Max(0, (now - stageStartedUtc).TotalSeconds)));
+            }
+
+            activeStage = stage;
+            stageStartedUtc = now;
+            RenderState();
+        }
+
+        private void CompleteAssistantEntry(AiResponse response, bool canPreview)
+        {
+            CompleteActiveStage();
+            ReplaceActiveEntry(new ConversationMessage(
+                activeEntryId!,
+                ConversationRole.Assistant,
+                ConversationMessageKind.Message,
+                ToConversationMode(Mode),
+                response.Message,
+                response.Metadata.ReasoningSummary,
+                activeStages.ToArray(),
+                ElapsedSinceRequest(),
+                null,
+                requestStartedUtc));
+            AppendTranscript(response.Message);
+        }
+
+        private void CompleteErrorEntry(ModifyValidationFailure failure)
+        {
+            CompleteActiveStage();
+            var stage = activeStage?.ToString() ?? "Request";
+            var error = new ConversationError(
+                failure.Code,
+                stage,
+                failure.Message,
+                failure.TechnicalDetails,
+                failure.Path);
+            ReplaceActiveEntry(new ConversationMessage(
+                activeEntryId ?? Guid.NewGuid().ToString("N"),
+                ConversationRole.Assistant,
+                ConversationMessageKind.Error,
+                ToConversationMode(Mode),
+                failure.Message,
+                null,
+                activeStages.ToArray(),
+                ElapsedSinceRequest(),
+                error,
+                requestStartedUtc == default ? utcNow() : requestStartedUtc));
+        }
+
+        private void CompleteCancelledEntry()
+        {
+            CompleteActiveStage();
+            ReplaceActiveEntry(new ConversationMessage(
+                activeEntryId!,
+                ConversationRole.Assistant,
+                ConversationMessageKind.Cancelled,
+                ToConversationMode(Mode),
+                "Request cancelled.",
+                null,
+                activeStages.ToArray(),
+                ElapsedSinceRequest(),
+                null,
+                requestStartedUtc));
+        }
+
+        private void CompleteActiveStage()
+        {
+            if (!activeStage.HasValue)
+            {
+                return;
+            }
+
+            var now = utcNow();
+            activeStages.Add(new ConversationStageTiming(
+                activeStage.Value.ToString(),
+                Math.Max(0, (now - stageStartedUtc).TotalSeconds)));
+            stageStartedUtc = now;
+        }
+
+        private void ReplaceActiveEntry(ConversationMessage replacement)
+        {
+            var index = activeEntryId == null
+                ? -1
+                : messages.FindIndex(message => string.Equals(message.Id, activeEntryId, StringComparison.Ordinal));
+            if (index >= 0)
+            {
+                messages[index] = replacement;
+            }
+            else
+            {
+                messages.Add(replacement);
+            }
+
+            activeEntryId = null;
+            activeStage = null;
+            RenderState();
+        }
+
+        private double ElapsedSinceRequest()
+        {
+            return Math.Max(0, (utcNow() - requestStartedUtc).TotalSeconds);
+        }
+
+        private async Task EnsureConversationLoadedAsync(string? programHash, CancellationToken cancellationToken)
+        {
+            if (conversationStore == null)
+            {
+                return;
+            }
+
+            await conversationLoadGate.WaitAsync(cancellationToken);
+            try
+            {
+                var key = programHash ?? "<general>";
+                requestedHistoryProgramHash = programHash;
+                hasRequestedHistory = true;
+                if (string.Equals(loadedHistoryKey, key, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                try
+                {
+                    conversationHistory = await conversationStore.LoadOrCreateAsync(programHash, cancellationToken);
+                    if (disposed)
+                    {
+                        return;
+                    }
+                    var currentTurn = CaptureActiveTurn();
+                    messages.Clear();
+                    messages.AddRange(conversationHistory.Messages);
+                    messages.AddRange(currentTurn);
+                    loadedHistoryKey = key;
+                    RenderState();
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    conversationHistory = null;
+                    loadedHistoryKey = null;
+                    AddPersistenceWarning(exception, "ConversationLoad");
+                }
+            }
+            finally
+            {
+                conversationLoadGate.Release();
+            }
+        }
+
+        private ConversationMessage[] CaptureActiveTurn()
+        {
+            if (activeEntryId == null)
+            {
+                return Array.Empty<ConversationMessage>();
+            }
+
+            var progressIndex = messages.FindIndex(
+                message => string.Equals(message.Id, activeEntryId, StringComparison.Ordinal));
+            if (progressIndex < 0)
+            {
+                return Array.Empty<ConversationMessage>();
+            }
+
+            var startIndex = progressIndex > 0 &&
+                messages[progressIndex - 1].Role == ConversationRole.User
+                ? progressIndex - 1
+                : progressIndex;
+            return messages.Skip(startIndex).ToArray();
+        }
+
+        private async Task PersistConversationAsync()
+        {
+            if (conversationStore == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (conversationHistory == null)
+                {
+                    conversationHistory = await conversationStore.LoadOrCreateAsync(
+                        hasRequestedHistory ? requestedHistoryProgramHash : null,
+                        CancellationToken.None);
+                }
+
+                conversationHistory = new ConversationHistory(
+                    conversationHistory.SchemaVersion,
+                    conversationHistory.ConversationId,
+                    messages.ToArray());
+                await conversationStore.SaveAsync(conversationHistory, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                AddPersistenceWarning(exception, "ConversationSave");
+            }
+        }
+
+        private async Task LinkConversationHashAsync(string programHash)
+        {
+            if (conversationStore == null || conversationHistory == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await conversationStore.LinkProgramHashAsync(
+                    conversationHistory.ConversationId,
+                    programHash,
+                    CancellationToken.None);
+                loadedHistoryKey = programHash;
+                requestedHistoryProgramHash = programHash;
+                hasRequestedHistory = true;
+            }
+            catch (Exception exception)
+            {
+                AddPersistenceWarning(exception, "ConversationLink");
+            }
+        }
+
+        private void AddPersistenceWarning(Exception exception, string stage)
+        {
+            var diagnostic = ExceptionDiagnostic.From(exception, stage);
+            var warning = new ConversationError(
+                "PersistenceWarning",
+                stage,
+                "Conversation history could not be persisted.",
+                diagnostic.TechnicalDetails,
+                null);
+            messages.Add(new ConversationMessage(
+                Guid.NewGuid().ToString("N"),
+                ConversationRole.System,
+                ConversationMessageKind.Error,
+                ToConversationMode(Mode),
+                warning.Summary,
+                null,
+                Array.Empty<ConversationStageTiming>(),
+                null,
+                warning,
+                utcNow()));
+            RenderState();
+        }
+
+        private static ConversationMode ToConversationMode(VizzyGptPanelMode mode)
+        {
+            return mode == VizzyGptPanelMode.Modify ? ConversationMode.Modify : ConversationMode.Ask;
         }
 
         private bool IsSessionCurrent()
@@ -815,11 +1310,37 @@ namespace VizzyGPT.Runtime.Ui
                 State,
                 StatusText,
                 TranscriptText,
+                CreateEntryRenderModels(),
                 State != VizzyGptPanelState.Closed && !isBusy,
                 State == VizzyGptPanelState.Sending || pendingConflict,
                 CanApply,
                 CanUndo,
                 compatibility.CanModify);
+        }
+
+        private IReadOnlyList<ConversationEntryRenderModel> CreateEntryRenderModels()
+        {
+            var previewMessageId = session != null && State == VizzyGptPanelState.PreviewReady
+                ? messages.LastOrDefault(message =>
+                    message.Role == ConversationRole.Assistant &&
+                    message.Kind == ConversationMessageKind.Message)?.Id
+                : null;
+            return messages.Select(message =>
+            {
+                var isActive = activeEntryId != null &&
+                    string.Equals(message.Id, activeEntryId, StringComparison.Ordinal);
+                return new ConversationEntryRenderModel(
+                    message.Id,
+                    message.Role,
+                    message.Text,
+                    message.ReasoningSummary,
+                    isActive ? activeStages.ToArray() : message.Stages,
+                    isActive ? activeStage : null,
+                    isActive ? ElapsedSinceRequest() : message.ElapsedSeconds,
+                    message.Error,
+                    !isActive &&
+                        string.Equals(message.Id, previewMessageId, StringComparison.Ordinal));
+            }).ToArray();
         }
 
         private string ProgramFingerprint(string hash)
@@ -857,6 +1378,33 @@ namespace VizzyGPT.Runtime.Ui
             public ChangeSession Session { get; }
 
             public string ExactBaseXml { get; }
+        }
+
+        private sealed class ModifyAttemptResult
+        {
+            private ModifyAttemptResult(
+                AiResponse response,
+                ChangeSession? session,
+                ModifyValidationFailure? failure)
+            {
+                Response = response;
+                Session = session;
+                Failure = failure;
+            }
+
+            public AiResponse Response { get; }
+            public ChangeSession? Session { get; }
+            public ModifyValidationFailure? Failure { get; }
+
+            public static ModifyAttemptResult Succeeded(AiResponse response, ChangeSession session)
+            {
+                return new ModifyAttemptResult(response, session, null);
+            }
+
+            public static ModifyAttemptResult Failed(AiResponse response, ModifyValidationFailure failure)
+            {
+                return new ModifyAttemptResult(response, null, failure);
+            }
         }
 
         private sealed class RequestContext
@@ -916,6 +1464,7 @@ namespace VizzyGPT.Runtime.Ui
         private Image? pendingIndicator;
         private Toggle? askToggle;
         private Toggle? modifyToggle;
+        private float nextElapsedRefreshTime;
 
         public VizzyGptPanelWorkflow Workflow => workflow ??
             throw new InvalidOperationException("Vizzy GPT panel is not configured.");
@@ -930,6 +1479,7 @@ namespace VizzyGPT.Runtime.Ui
             this.openSettings = openSettings;
             this.openPreview = openPreview;
             Render(workflow.CurrentRenderState);
+            _ = workflow.LoadConversationAsync();
         }
 
         public void Bind(IXmlLayout layout, TMP_FontAsset? cjkFont = null)
@@ -1125,6 +1675,17 @@ namespace VizzyGPT.Runtime.Ui
         private void LateUpdate()
         {
             RefreshDynamicTextFonts();
+        }
+
+        private void Update()
+        {
+            if (workflow == null || Time.unscaledTime < nextElapsedRefreshTime)
+            {
+                return;
+            }
+
+            nextElapsedRefreshTime = Time.unscaledTime + 0.25f;
+            workflow.RefreshElapsed();
         }
 
         private void UnbindInput()

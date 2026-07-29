@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using VizzyGPT.Core.Api;
+using VizzyGPT.Core.Conversations;
 using VizzyGPT.Core.Patching;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Validation;
@@ -18,6 +20,131 @@ namespace VizzyGPT.Tests.EditMode
     {
         private const string InitialXml =
             "<Program><Variables /><Instructions><Log id='1' text='before' /></Instructions><Expressions /></Program>";
+
+        [Test]
+        public void Modify_repairs_one_protected_root_failure_against_the_original_source()
+        {
+            var requests = new List<AiRequest>();
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(requests.Count == 1
+                    ? CreateProtectedRootResponse(InitialXml, "failed-output-marker")
+                    : CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            var originalHash = VizzyProgramHash.Compute(VizzyProgramDocument.Parse(InitialXml));
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].Context, Does.Contain("ProtectedRoot"));
+            Assert.That(requests[1].Context, Does.Contain(originalHash));
+            Assert.That(requests[1].Context, Does.Contain("before"));
+            Assert.That(requests[1].Context, Does.Not.Contain("failed-output-marker"));
+            Assert.That(adapter.SetCalls, Is.Zero);
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
+        }
+
+        [Test]
+        public void Modify_stops_after_one_failed_repair_with_terminal_diagnostics()
+        {
+            var sendCount = 0;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (_, __) =>
+            {
+                sendCount++;
+                return Task.FromResult(CreateProtectedRootResponse(InitialXml, "invalid-" + sendCount));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Remove the instruction root.").GetAwaiter().GetResult();
+
+            Assert.That(sendCount, Is.EqualTo(2));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+            Assert.That(workflow.CurrentRenderState.Entries.Last().Error, Is.Not.Null);
+            Assert.That(workflow.CurrentRenderState.Entries.Last().Error!.TechnicalDetails, Does.Contain("protected"));
+            Assert.That(adapter.SetCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Modify_records_ordered_stages_and_provider_reasoning()
+        {
+            var now = new DateTime(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(
+                adapter,
+                (_, __) =>
+                {
+                    now = now.AddSeconds(2);
+                    var response = CreateValidModifyResponseValue(InitialXml);
+                    return Task.FromResult(new AiResponse(
+                        response.Message,
+                        response.Patch,
+                        response.CanApply,
+                        response.Diagnostics,
+                        new AiResponseMetadata("Checked the patch.", null, null, false)));
+                },
+                utcNow: () => now);
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            var assistant = workflow.CurrentRenderState.Entries.Last();
+            Assert.That(assistant.ReasoningSummary, Is.EqualTo("Checked the patch."));
+            Assert.That(
+                assistant.Stages.Select(stage => stage.Stage),
+                Is.EqualTo(new[]
+                {
+                    "ReadingProgram",
+                    "BuildingContext",
+                    "WaitingForModel",
+                    "ParsingPatch",
+                    "ValidatingPatch",
+                    "PreparingPreview"
+                }));
+            Assert.That(assistant.CanPreview, Is.True);
+        }
+
+        [Test]
+        public void Refresh_elapsed_rerenders_only_while_sending()
+        {
+            var now = new DateTime(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
+            var renders = 0;
+            using var started = new ManualResetEventSlim();
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    started.Set();
+                    return completion.Task;
+                },
+                render: _ => renders++,
+                utcNow: () => now);
+
+            workflow.OpenPanel();
+            var sending = workflow.SendPromptAsync("Explain.");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            var beforeRefresh = renders;
+            now = now.AddSeconds(1.5);
+
+            workflow.RefreshElapsed();
+
+            Assert.That(renders, Is.EqualTo(beforeRefresh + 1));
+            Assert.That(workflow.CurrentRenderState.Entries.Last().ElapsedSeconds, Is.EqualTo(1.5).Within(0.001));
+            completion.SetResult(new AiResponse("Done.", null, false, Array.Empty<string>()));
+            sending.GetAwaiter().GetResult();
+            beforeRefresh = renders;
+
+            workflow.RefreshElapsed();
+
+            Assert.That(renders, Is.EqualTo(beforeRefresh));
+        }
 
         [Test]
         public void Ask_escapes_output_and_never_enables_apply()
@@ -81,6 +208,7 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Cancel_aborts_the_in_flight_request()
         {
+            var sendCount = 0;
             using var requestStarted = new ManualResetEventSlim();
             var completion = new TaskCompletionSource<AiResponse>();
             var observedToken = default(CancellationToken);
@@ -89,6 +217,7 @@ namespace VizzyGPT.Tests.EditMode
                 adapter,
                 (_, cancellationToken) =>
                 {
+                    sendCount++;
                     observedToken = cancellationToken;
                     requestStarted.Set();
                     return completion.Task;
@@ -103,6 +232,27 @@ namespace VizzyGPT.Tests.EditMode
             sending.GetAwaiter().GetResult();
 
             Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(sendCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Modify_transport_failure_does_not_trigger_repair()
+        {
+            var sendCount = 0;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (_, __) =>
+            {
+                sendCount++;
+                throw new InvalidOperationException("transport unavailable");
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sendCount, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+            Assert.That(adapter.SetCalls, Is.Zero);
         }
 
         [Test]
@@ -232,6 +382,7 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Modify_rejects_response_when_editor_changed_while_request_was_pending()
         {
+            var sendCount = 0;
             using var requestStarted = new ManualResetEventSlim();
             var response = new TaskCompletionSource<AiResponse>();
             var adapter = new FakeAdapter(InitialXml);
@@ -239,6 +390,7 @@ namespace VizzyGPT.Tests.EditMode
                 adapter,
                 (_, __) =>
                 {
+                    sendCount++;
                     requestStarted.Set();
                     return response.Task;
                 });
@@ -256,6 +408,7 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(workflow.ShowPreview(), Is.Null);
             Assert.That(workflow.CanApply, Is.False);
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
+            Assert.That(sendCount, Is.EqualTo(1));
         }
 
         [Test]
@@ -375,7 +528,9 @@ namespace VizzyGPT.Tests.EditMode
             FakeAdapter adapter,
             Func<AiRequest, CancellationToken, Task<AiResponse>> sendAsync,
             Func<string, string, DateTime, CancellationToken, Task>? saveBackupAsync = null,
-            Action<VizzyGptPanelRenderState>? render = null)
+            Action<VizzyGptPanelRenderState>? render = null,
+            Func<DateTime>? utcNow = null,
+            IConversationStore? conversationStore = null)
         {
             return new VizzyGptPanelWorkflow(
                 adapter,
@@ -390,8 +545,9 @@ namespace VizzyGPT.Tests.EditMode
                     TimeSpan.FromSeconds(10)),
                 saveBackupAsync ?? ((_, __, ___, ____) => Task.CompletedTask),
                 CreateCatalog,
-                () => new DateTime(2026, 7, 21, 0, 0, 0, DateTimeKind.Utc),
-                render ?? (_ => { }));
+                utcNow ?? (() => new DateTime(2026, 7, 21, 0, 0, 0, DateTimeKind.Utc)),
+                render ?? (_ => { }),
+                conversationStore: conversationStore);
         }
 
         private static Func<AiRequest, CancellationToken, Task<AiResponse>> CreateValidModifyResponse(string baseXml)
@@ -410,6 +566,21 @@ namespace VizzyGPT.Tests.EditMode
                     new PatchOperation(PatchOperationType.AddVariable, name: "counter", value: "0")
                 });
             return new AiResponse("Counter preview.", patch, true, Array.Empty<string>());
+        }
+
+        private static AiResponse CreateProtectedRootResponse(string baseXml, string marker)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                marker,
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.RemoveNode,
+                        new NodeSelector(null, "/Program[0]/Instructions[0]"))
+                });
+            return new AiResponse(marker, patch, true, Array.Empty<string>());
         }
 
         private static VizzyNodeCatalog CreateCatalog()
