@@ -1497,18 +1497,14 @@ namespace VizzyGPT.Runtime.Ui
         private string prompt = string.Empty;
         private Action? openSettings;
         private Action<PreviewDialogModel>? openPreview;
-        private TMP_InputField? promptInput;
-        private TMP_Text? transcriptText;
-        private TMP_Text? statusText;
+        private TMP_InputField? composerInput;
         private TMP_FontAsset? expectedCjkFont;
-        private TMP_Text?[] dynamicTextTargets = Array.Empty<TMP_Text?>();
+        private ConversationMessageListView? messageList;
         private RectTransform? panelRoot;
         private Button? launcherButton;
         private Button? sendButton;
         private Button? cancelButton;
-        private Button? previewButton;
         private Button? undoButton;
-        private Image? pendingIndicator;
         private Toggle? askToggle;
         private Toggle? modifyToggle;
         private float nextElapsedRefreshTime;
@@ -1529,7 +1525,10 @@ namespace VizzyGPT.Runtime.Ui
             _ = workflow.LoadConversationAsync();
         }
 
-        public void Bind(IXmlLayout layout, TMP_FontAsset? cjkFont = null)
+        public void Bind(
+            IXmlLayout layout,
+            TMP_FontAsset? cjkFont = null,
+            Func<GameObject, TMP_Text>? createDynamicText = null)
         {
             if (layout == null)
             {
@@ -1537,29 +1536,37 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             UnbindInput();
-            promptInput = RequireElement<TMP_InputField>(layout, "prompt-input");
-            transcriptText = RequireElement<TMP_Text>(layout, "transcript-text");
-            statusText = RequireElement<TMP_Text>(layout, "status-text");
+            messageList?.Dispose();
+            composerInput = RequireElement<TMP_InputField>(layout, "composer-input");
+            var conversationScroll = RequireElement<ScrollRect>(layout, "conversation-scroll");
+            var conversationContent = RequireElement<RectTransform>(layout, "conversation-content");
             panelRoot = RequireElement<RectTransform>(layout, "vizzy-gpt-panel");
+            var modePanel = RequireElement<RectTransform>(layout, "mode-panel");
+            ConstrainPanelToParent(panelRoot);
+            ConstrainPanelChildWidth(panelRoot, (RectTransform)composerInput.transform);
+            ConstrainPanelChildWidth(panelRoot, modePanel);
             launcherButton = RequireElement<Button>(layout, "gpt-launcher-button");
             sendButton = RequireElement<Button>(layout, "send-button");
-            cancelButton = RequireElement<Button>(layout, "cancel-button");
-            previewButton = RequireElement<Button>(layout, "preview-button");
+            cancelButton = RequireElement<Button>(layout, "cancel-request-button");
             undoButton = RequireElement<Button>(layout, "undo-button");
-            pendingIndicator = RequireElement<Image>(layout, "pending-indicator");
             askToggle = RequireElement<Toggle>(layout, "ask-toggle");
             modifyToggle = RequireElement<Toggle>(layout, "modify-toggle");
 
-            CjkTextFontApplicator.ApplyToInput(promptInput, cjkFont);
-            dynamicTextTargets = new[] { transcriptText, statusText };
-            CjkTextFontApplicator.ApplyToText(cjkFont, dynamicTextTargets);
             expectedCjkFont = cjkFont;
+            CjkTextFontApplicator.ApplyToInput(composerInput, cjkFont);
+            messageList = new ConversationMessageListView(
+                conversationContent,
+                conversationScroll,
+                (RectTransform)composerInput.transform,
+                cjkFont,
+                OnPreviewButtonClicked,
+                createDynamicText);
 
-            if (promptInput != null)
+            if (composerInput != null)
             {
                 // The stock TMP input owns focus; ModApi exposes its UI focus gates as read-only.
-                promptInput.onValueChanged.AddListener(OnPromptValueChanged);
-                promptInput.text = prompt;
+                composerInput.onValueChanged.AddListener(OnPromptValueChanged);
+                composerInput.text = prompt;
             }
 
             Render(workflow?.CurrentRenderState);
@@ -1572,11 +1579,11 @@ namespace VizzyGPT.Runtime.Ui
 
         public void RefreshDynamicTextFonts()
         {
-            var inputChanged = CjkTextFontApplicator.ApplyToInput(promptInput, expectedCjkFont);
-            CjkTextFontApplicator.ApplyToText(expectedCjkFont, dynamicTextTargets);
+            var inputChanged = CjkTextFontApplicator.ApplyToInput(composerInput, expectedCjkFont);
+            messageList?.RefreshDynamicTextFonts();
             if (inputChanged)
             {
-                promptInput?.ForceLabelUpdate();
+                composerInput?.ForceLabelUpdate();
             }
         }
 
@@ -1602,10 +1609,19 @@ namespace VizzyGPT.Runtime.Ui
 
         public async void OnSendButtonClicked()
         {
-            if (workflow != null)
+            if (workflow == null)
             {
-                await workflow.SendPromptAsync(prompt);
+                return;
             }
+
+            var entryCount = workflow.CurrentRenderState.Entries.Count;
+            var send = workflow.SendPromptAsync(prompt);
+            if (workflow.CurrentRenderState.Entries.Count > entryCount)
+            {
+                ClearComposer();
+            }
+
+            await send;
         }
 
         public async void OnCancelButtonClicked()
@@ -1654,17 +1670,7 @@ namespace VizzyGPT.Runtime.Ui
                 return;
             }
 
-            if (transcriptText != null)
-            {
-                transcriptText.text = state.TranscriptText;
-            }
-
-            if (statusText != null)
-            {
-                statusText.text = state.StatusText;
-            }
-
-            CjkTextFontApplicator.ApplyToText(expectedCjkFont, dynamicTextTargets);
+            messageList?.Render(state.Entries);
 
             if (panelRoot != null)
             {
@@ -1678,28 +1684,19 @@ namespace VizzyGPT.Runtime.Ui
 
             if (sendButton != null)
             {
+                sendButton.gameObject.SetActive(!state.CanCancel);
                 sendButton.interactable = state.CanSend;
             }
 
             if (cancelButton != null)
             {
+                cancelButton.gameObject.SetActive(state.CanCancel);
                 cancelButton.interactable = state.CanCancel;
-            }
-
-            if (previewButton != null)
-            {
-                previewButton.gameObject.SetActive(state.CanModify);
-                previewButton.interactable = state.CanPreview;
             }
 
             if (undoButton != null)
             {
                 undoButton.interactable = state.CanUndo;
-            }
-
-            if (pendingIndicator != null)
-            {
-                pendingIndicator.gameObject.SetActive(state.State == VizzyGptPanelState.PreviewReady);
             }
 
             askToggle?.SetIsOnWithoutNotify(state.Mode == VizzyGptPanelMode.Ask);
@@ -1713,10 +1710,17 @@ namespace VizzyGPT.Runtime.Ui
         private void OnPromptValueChanged(string value)
         {
             SetPromptText(value);
-            if (CjkTextFontApplicator.ApplyToInput(promptInput, expectedCjkFont))
+            if (CjkTextFontApplicator.ApplyToInput(composerInput, expectedCjkFont))
             {
-                promptInput?.ForceLabelUpdate();
+                composerInput?.ForceLabelUpdate();
             }
+        }
+
+        private void ClearComposer()
+        {
+            prompt = string.Empty;
+            composerInput?.SetTextWithoutNotify(string.Empty);
+            composerInput?.ForceLabelUpdate();
         }
 
         private void LateUpdate()
@@ -1737,19 +1741,48 @@ namespace VizzyGPT.Runtime.Ui
 
         private void UnbindInput()
         {
-            if (promptInput == null)
+            if (composerInput == null)
             {
                 return;
             }
 
-            promptInput.onValueChanged.RemoveListener(OnPromptValueChanged);
-            promptInput = null;
+            composerInput.onValueChanged.RemoveListener(OnPromptValueChanged);
+            composerInput = null;
         }
 
         private static T RequireElement<T>(IXmlLayout layout, string id) where T : Component
         {
             return layout.GetElementById<T>(id) ??
                 throw new InvalidOperationException("Vizzy GPT XML is missing required " + typeof(T).Name + " '" + id + "'.");
+        }
+
+        private static void ConstrainPanelToParent(RectTransform panel)
+        {
+            if (!(panel.parent is RectTransform parent))
+            {
+                return;
+            }
+
+            var availableWidth = parent.rect.width - 32f;
+            var availableHeight = parent.rect.height - 32f;
+            if (availableWidth > 0f && panel.rect.width > availableWidth)
+            {
+                panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, availableWidth);
+            }
+
+            if (availableHeight > 0f && panel.rect.height > availableHeight)
+            {
+                panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, availableHeight);
+            }
+        }
+
+        private static void ConstrainPanelChildWidth(RectTransform panel, RectTransform child)
+        {
+            var availableWidth = panel.rect.width - 32f;
+            if (availableWidth > 0f && child.rect.width > availableWidth)
+            {
+                child.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, availableWidth);
+            }
         }
 
         private void OnDestroy()
@@ -1760,7 +1793,8 @@ namespace VizzyGPT.Runtime.Ui
             openSettings = null;
             openPreview = null;
             expectedCjkFont = null;
-            dynamicTextTargets = Array.Empty<TMP_Text?>();
+            messageList?.Dispose();
+            messageList = null;
         }
     }
 }

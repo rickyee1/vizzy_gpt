@@ -42,31 +42,35 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
-        public void ApplyToText_updates_dynamic_targets_but_not_unlisted_static_label()
+        public void ApplyToText_updates_every_dynamic_message_target_but_not_unlisted_static_label()
         {
             var font = ScriptableObject.CreateInstance<TMP_FontAsset>();
             var fontMaterial = new Material(Shader.Find("UI/Default"));
             font.material = fontMaterial;
-            var transcript = new GameObject("transcript").AddComponent<TestTmpText>();
-            var status = new GameObject("status").AddComponent<TestTmpText>();
+            var role = new GameObject("role").AddComponent<TestTmpText>();
+            var body = new GameObject("body").AddComponent<TestTmpText>();
+            var reasoning = new GameObject("reasoning").AddComponent<TestTmpText>();
+            var error = new GameObject("error").AddComponent<TestTmpText>();
             var staticLabel = new GameObject("static").AddComponent<TestTmpText>();
             var original = staticLabel.font;
             var originalMaterial = staticLabel.fontSharedMaterial;
             try
             {
-                CjkTextFontApplicator.ApplyToText(font, transcript, status);
+                CjkTextFontApplicator.ApplyToText(font, role, body, reasoning, error);
 
-                Assert.That(transcript.font, Is.SameAs(font));
-                Assert.That(status.font, Is.SameAs(font));
-                Assert.That(transcript.fontSharedMaterial, Is.SameAs(fontMaterial));
-                Assert.That(status.fontSharedMaterial, Is.SameAs(fontMaterial));
+                Assert.That(new[] { role, body, reasoning, error }, Has.All.Property("font").SameAs(font));
+                Assert.That(
+                    new[] { role, body, reasoning, error },
+                    Has.All.Property("fontSharedMaterial").SameAs(fontMaterial));
                 Assert.That(staticLabel.font, Is.SameAs(original));
                 Assert.That(staticLabel.fontSharedMaterial, Is.SameAs(originalMaterial));
             }
             finally
             {
-                Object.DestroyImmediate(transcript.gameObject);
-                Object.DestroyImmediate(status.gameObject);
+                Object.DestroyImmediate(role.gameObject);
+                Object.DestroyImmediate(body.gameObject);
+                Object.DestroyImmediate(reasoning.gameObject);
+                Object.DestroyImmediate(error.gameObject);
                 Object.DestroyImmediate(staticLabel.gameObject);
                 Object.DestroyImmediate(font);
                 Object.DestroyImmediate(fontMaterial);

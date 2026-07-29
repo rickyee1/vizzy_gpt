@@ -15,8 +15,8 @@ namespace VizzyGPT.Tests.EditMode
         private static readonly string[] PanelIds =
         {
             "gpt-launcher-button", "vizzy-gpt-panel", "settings-button", "close-button",
-            "ask-toggle", "modify-toggle", "transcript-text", "status-text", "pending-indicator",
-            "prompt-input", "undo-button", "preview-button", "send-button", "cancel-button"
+            "mode-panel", "ask-toggle", "modify-toggle", "conversation-scroll", "conversation-content",
+            "composer-input", "undo-button", "send-button", "cancel-request-button"
         };
 
         private static readonly string[] PreviewIds =
@@ -51,8 +51,19 @@ namespace VizzyGPT.Tests.EditMode
 
             if (resourceName == "VizzyGptPanel.xml")
             {
-                Assert.That(document.SelectSingleNode("//ui:TextMeshProInputField[@id='prompt-input']", namespaceManager), Is.Not.Null);
+                Assert.That(document.SelectSingleNode("//ui:TextMeshProInputField[@id='composer-input']", namespaceManager), Is.Not.Null);
             }
+        }
+
+        [Test]
+        public void Panel_omits_obsolete_transcript_status_pending_and_global_preview_controls()
+        {
+            var document = LoadResource("VizzyGptPanel.xml");
+
+            Assert.That(document.SelectSingleNode("//*[@id='transcript-text']"), Is.Null);
+            Assert.That(document.SelectSingleNode("//*[@id='status-text']"), Is.Null);
+            Assert.That(document.SelectSingleNode("//*[@id='pending-indicator']"), Is.Null);
+            Assert.That(document.SelectSingleNode("//*[@id='preview-button']"), Is.Null);
         }
 
         [Test]
@@ -138,7 +149,7 @@ namespace VizzyGPT.Tests.EditMode
             AssertToggle(document, namespaceManager, "modify-toggle", "Modify", "OnModifyModeClicked();");
         }
 
-        [TestCase("VizzyGptPanel.xml", "prompt-input")]
+        [TestCase("VizzyGptPanel.xml", "composer-input")]
         [TestCase("SettingsDialog.xml", "base-url-input")]
         [TestCase("SettingsDialog.xml", "api-mode-input")]
         [TestCase("SettingsDialog.xml", "model-input")]
@@ -160,7 +171,7 @@ namespace VizzyGPT.Tests.EditMode
         [Test]
         public void Task_dialog_surfaces_do_not_use_padding_panels_as_layout_containers()
         {
-            AssertSurfaceHasStableGeometry("VizzyGptPanel.xml", "vizzy-gpt-panel", "transcript-scroll", "prompt-input");
+            AssertSurfaceHasStableGeometry("VizzyGptPanel.xml", "vizzy-gpt-panel", "conversation-scroll", "composer-input");
             AssertSurfaceHasStableGeometry("PreviewDialog.xml", "preview-dialog-content", "preview-scroll", "apply-button");
             AssertSurfaceHasStableGeometry("SettingsDialog.xml", "settings-dialog-content", "settings-form", "save-button");
         }
@@ -171,8 +182,6 @@ namespace VizzyGPT.Tests.EditMode
             var panel = LoadResource("VizzyGptPanel.xml");
             AssertAnchoredRect(panel, "panel-title", "0 1", "0 1", "0 1", "12 -44", "240 -12");
             AssertAnchoredRect(panel, "mode-label", "0 1", "0 1", "0 1", "0 -20", "80 0");
-            AssertAnchoredRect(panel, "status-text", "0 0", "0 0", "0 0", "12 144", "312 168");
-            AssertAnchoredRect(panel, "pending-indicator", "0 0", "0 0", "0 0", "326 150", "336 160");
             AssertToggleHalf(panel, "ask-toggle", "LowerLeft");
             AssertToggleHalf(panel, "modify-toggle", "LowerRight");
             AssertNonOverlappingToggleHalves(panel);
@@ -336,59 +345,42 @@ namespace VizzyGPT.Tests.EditMode
         {
             var styles = LoadStockStyles();
             var panel = document.SelectSingleNode("//*[@id='vizzy-gpt-panel']") as XmlElement;
-            var prompt = document.SelectSingleNode("//*[@id='prompt-input']") as XmlElement;
-            var status = document.SelectSingleNode("//*[@id='status-text']") as XmlElement;
-            var pending = document.SelectSingleNode("//*[@id='pending-indicator']") as XmlElement;
-            var transcript = document.SelectSingleNode("//*[@id='transcript-scroll']") as XmlElement;
+            var prompt = document.SelectSingleNode("//*[@id='composer-input']") as XmlElement;
+            var transcript = document.SelectSingleNode("//*[@id='conversation-scroll']") as XmlElement;
             Assert.That(panel, Is.Not.Null);
             Assert.That(prompt, Is.Not.Null);
-            Assert.That(status, Is.Not.Null);
-            Assert.That(pending, Is.Not.Null);
             Assert.That(transcript, Is.Not.Null);
 
             var panelWidth = ParseInt(panel!.GetAttribute("width"));
             var panelHeight = ParseInt(panel.GetAttribute("height"));
             var promptRect = GetLowerAlignedRect(prompt!, styles, panelWidth);
-            var statusRect = GetAnchoredRect(status!, panelWidth, panelHeight);
-            var pendingRect = GetAnchoredRect(pending!, panelWidth, panelHeight);
             var transcriptRect = GetAnchoredRect(transcript!, panelWidth, panelHeight);
             var controls = new[]
             {
                 GetLowerAlignedRect(GetElement(document, "undo-button"), styles, panelWidth),
-                GetLowerAlignedRect(GetElement(document, "preview-button"), styles, panelWidth),
                 GetLowerAlignedRect(GetElement(document, "send-button"), styles, panelWidth),
-                GetLowerAlignedRect(GetElement(document, "cancel-button"), styles, panelWidth)
+                GetLowerAlignedRect(GetElement(document, "cancel-request-button"), styles, panelWidth)
             };
 
-            for (var index = 0; index < controls.Length; index++)
+            Assert.That(controls[1], Is.EqualTo(controls[2]), "Send and Cancel must share one command position.");
+            for (var index = 0; index < 2; index++)
             {
                 Assert.That(controls[index].Overlaps(promptRect), Is.False, "Bottom control overlaps prompt: " + index);
                 for (var next = index + 1; next < controls.Length; next++)
                 {
-                    Assert.That(controls[index].Overlaps(controls[next]), Is.False, "Bottom controls overlap.");
+                    if (index == 0)
+                    {
+                        Assert.That(controls[index].Overlaps(controls[next]), Is.False, "Undo overlaps the command control.");
+                    }
                 }
             }
 
             Assert.That(promptRect.yMin, Is.GreaterThan(controls[0].yMax));
             Assert.That(promptRect.yMin, Is.GreaterThan(controls[1].yMax));
-            Assert.That(promptRect.yMin, Is.GreaterThan(controls[2].yMax));
-            Assert.That(promptRect.yMin, Is.GreaterThan(controls[3].yMax));
-            Assert.That(statusRect.Overlaps(promptRect), Is.False, "Status overlaps prompt.");
-            Assert.That(pendingRect.Overlaps(promptRect), Is.False, "Pending indicator overlaps prompt.");
-            Assert.That(statusRect.Overlaps(pendingRect), Is.False, "Status overlaps pending indicator.");
             Assert.That(transcriptRect.Overlaps(promptRect), Is.False, "Transcript overlaps prompt.");
-            Assert.That(transcriptRect.Overlaps(statusRect), Is.False, "Transcript overlaps status.");
-            Assert.That(transcriptRect.Overlaps(pendingRect), Is.False, "Transcript overlaps pending indicator.");
-            Assert.That(promptRect.yMax, Is.LessThan(statusRect.yMin));
-            Assert.That(promptRect.yMax, Is.LessThan(pendingRect.yMin));
-            Assert.That(statusRect.yMax, Is.LessThan(transcriptRect.yMin));
-            Assert.That(pendingRect.yMax, Is.LessThan(transcriptRect.yMin));
+            Assert.That(promptRect.yMax, Is.LessThan(transcriptRect.yMin));
             Assert.That(transcriptRect.yMin, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
             Assert.That(transcriptRect.yMax, Is.LessThan(panelHeight), "Transcript top offset must reserve upper controls.");
-            Assert.That(statusRect.width, Is.GreaterThan(0));
-            Assert.That(statusRect.height, Is.GreaterThan(0));
-            Assert.That(pendingRect.width, Is.GreaterThan(0));
-            Assert.That(pendingRect.height, Is.GreaterThan(0));
         }
 
         private static XmlDocument LoadStockStyles()
