@@ -75,6 +75,20 @@ namespace VizzyGPT.Core.Tests.Diagnostics
             Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("sensitive"));
         }
 
+        [TestCase("<!-- sensitive-prolog --><Program />")]
+        [TestCase("<!DOCTYPE Program [<!ELEMENT Program ANY>]><Program />")]
+        public void From_replaces_valid_xml_with_comments_or_doctype_prefixes(string payload)
+        {
+            var diagnostic = ExceptionDiagnostic.From(
+                new InvalidOperationException(payload),
+                "RuntimeValidation");
+
+            Assert.That(diagnostic.DisplayMessage, Is.EqualTo("[REDACTED STRUCTURED PAYLOAD]"));
+            Assert.That(diagnostic.TechnicalDetails, Does.EndWith(": [REDACTED STRUCTURED PAYLOAD]"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("sensitive-prolog"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("DOCTYPE"));
+        }
+
         [Test]
         public void From_bounds_non_structured_messages_in_both_outputs()
         {

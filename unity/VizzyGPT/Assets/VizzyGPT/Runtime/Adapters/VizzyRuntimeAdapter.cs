@@ -20,6 +20,7 @@ namespace VizzyGPT.Runtime.Adapters
         private readonly Func<string, Exception?> runtimeValidation;
         private readonly Func<FlightProgram?> publicFlightProgramResolver;
         private readonly Func<FlightProgram?> fallbackFlightProgramResolver;
+        private readonly Func<FlightProgram, string> serializeFlightProgram;
         private RuntimeContract editorContract;
         private RuntimeCompatibilityResult editorCompatibility;
 
@@ -28,6 +29,7 @@ namespace VizzyGPT.Runtime.Adapters
             runtimeValidation = ValidateRuntimeProgram;
             publicFlightProgramResolver = ResolvePublicFlightProgram;
             fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
+            serializeFlightProgram = Serialize;
         }
 
         internal VizzyRuntimeAdapter(Func<string, Exception?> runtimeValidation)
@@ -35,6 +37,7 @@ namespace VizzyGPT.Runtime.Adapters
             this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
             publicFlightProgramResolver = ResolvePublicFlightProgram;
             fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
+            serializeFlightProgram = Serialize;
         }
 
         internal VizzyRuntimeAdapter(
@@ -47,6 +50,22 @@ namespace VizzyGPT.Runtime.Adapters
                 throw new ArgumentNullException(nameof(publicFlightProgramResolver));
             this.fallbackFlightProgramResolver = fallbackFlightProgramResolver ??
                 throw new ArgumentNullException(nameof(fallbackFlightProgramResolver));
+            serializeFlightProgram = Serialize;
+        }
+
+        internal VizzyRuntimeAdapter(
+            Func<string, Exception?> runtimeValidation,
+            Func<FlightProgram?> publicFlightProgramResolver,
+            Func<FlightProgram?> fallbackFlightProgramResolver,
+            Func<FlightProgram, string> serializeFlightProgram)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            this.publicFlightProgramResolver = publicFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(publicFlightProgramResolver));
+            this.fallbackFlightProgramResolver = fallbackFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(fallbackFlightProgramResolver));
+            this.serializeFlightProgram = serializeFlightProgram ??
+                throw new ArgumentNullException(nameof(serializeFlightProgram));
         }
 
         public bool IsEditorAvailable => GetEditorContract() != null;
@@ -75,7 +94,7 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                xml = Serialize(ReadFlightProgram(contract.Instance, contract.FlightProgramMember));
+                xml = serializeFlightProgram(ReadFlightProgram(contract.Instance, contract.FlightProgramMember));
                 return true;
             }
             catch (Exception exception)
@@ -169,7 +188,7 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                xml = Serialize(flightProgram);
+                xml = serializeFlightProgram(flightProgram);
                 return true;
             }
             catch (Exception exception)

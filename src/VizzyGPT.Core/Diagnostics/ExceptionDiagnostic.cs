@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Newtonsoft.Json.Linq;
 using VizzyGPT.Core.Security;
 
@@ -91,6 +92,11 @@ namespace VizzyGPT.Core.Diagnostics
                 return StructuredPayloadPlaceholder;
             }
 
+            if (IsTopLevelXml(safe))
+            {
+                return StructuredPayloadPlaceholder;
+            }
+
             safe = AuthorizationValue.Replace(safe, "$1[REDACTED]");
             safe = BareBearer.Replace(safe, "$1[REDACTED]");
             safe = ApiKeyAssignment.Replace(safe, "$1[REDACTED]");
@@ -107,6 +113,18 @@ namespace VizzyGPT.Core.Diagnostics
             {
                 JToken.Parse(value);
                 return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsTopLevelXml(string value)
+        {
+            try
+            {
+                return XDocument.Parse(value, LoadOptions.None).Root != null;
             }
             catch (Exception)
             {
