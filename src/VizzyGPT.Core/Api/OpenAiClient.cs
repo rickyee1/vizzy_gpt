@@ -70,11 +70,16 @@ namespace VizzyGPT.Core.Api
                     MakeDisplaySafe(firstExtraction.Refusal, request.ApiKey),
                     patch: null,
                     canApply: false,
-                    Array.Empty<string>());
+                    Array.Empty<string>(),
+                    firstExtraction.Metadata);
             }
 
             var invalidOutput = firstExtraction.ModelOutput!;
-            if (TryParseEnvelope(invalidOutput, out var validResponse, out var validationError))
+            if (TryParseEnvelope(
+                invalidOutput,
+                firstExtraction.Metadata,
+                out var validResponse,
+                out var validationError))
             {
                 return validResponse;
             }
@@ -91,11 +96,13 @@ namespace VizzyGPT.Core.Api
                     MakeDisplaySafe(repairExtraction.Refusal, request.ApiKey),
                     patch: null,
                     canApply: false,
-                    Array.Empty<string>());
+                    Array.Empty<string>(),
+                    repairExtraction.Metadata);
             }
 
             invalidOutput = repairExtraction.ModelOutput!;
-            if (TryParseEnvelope(invalidOutput, out validResponse, out validationError))
+            var repairMetadata = WithSchemaRepair(repairExtraction.Metadata);
+            if (TryParseEnvelope(invalidOutput, repairMetadata, out validResponse, out validationError))
             {
                 return validResponse;
             }
@@ -108,7 +115,8 @@ namespace VizzyGPT.Core.Api
                 "The model response could not be validated.",
                 patch: null,
                 canApply: false,
-                new[] { diagnostic });
+                new[] { diagnostic },
+                repairExtraction.Metadata);
         }
 
         private async Task<HttpTransportResponse> SendToEndpointAsync(
@@ -335,13 +343,14 @@ namespace VizzyGPT.Core.Api
 
         private static bool TryParseEnvelope(
             string modelOutput,
+            AiResponseMetadata metadata,
             out AiResponse response,
             out string validationError)
         {
             response = null!;
             try
             {
-                response = ParseEnvelope(modelOutput);
+                response = ParseEnvelope(modelOutput, metadata);
                 validationError = string.Empty;
                 return true;
             }
@@ -366,14 +375,15 @@ namespace VizzyGPT.Core.Api
                 var root = ParseJsonObject(responseBody, "API response");
                 if (endpointMode == ApiMode.Responses)
                 {
+                    var metadata = ExtractResponsesMetadata(root);
                     if (root["message"]?.Type == JTokenType.String && root["patch"] is JObject)
                     {
-                        return ModelExtraction.Output(responseBody);
+                        return ModelExtraction.Output(responseBody, metadata);
                     }
 
                     if (root["output_text"]?.Type == JTokenType.String)
                     {
-                        return ModelExtraction.Output(root["output_text"]!.Value<string>()!);
+                        return ModelExtraction.Output(root["output_text"]!.Value<string>()!, metadata);
                     }
 
                     if (!(root["output"] is JArray output))
@@ -399,7 +409,7 @@ namespace VizzyGPT.Core.Api
                             candidate["refusal"]?.Type == JTokenType.String);
                         if (refusal != null)
                         {
-                            return ModelExtraction.Refused(refusal["refusal"]!.Value<string>()!);
+                            return ModelExtraction.Refused(refusal["refusal"]!.Value<string>()!, metadata);
                         }
 
                         var outputText = content.OfType<JObject>().FirstOrDefault(candidate =>
@@ -407,7 +417,7 @@ namespace VizzyGPT.Core.Api
                             candidate["text"]?.Type == JTokenType.String);
                         if (outputText != null)
                         {
-                            return ModelExtraction.Output(outputText["text"]!.Value<string>()!);
+                            return ModelExtraction.Output(outputText["text"]!.Value<string>()!, metadata);
                         }
                     }
 
@@ -424,9 +434,10 @@ namespace VizzyGPT.Core.Api
                         "Chat Completions output must contain choices[0].message with the assistant role.");
                 }
 
+                var chatMetadata = ExtractChatMetadata(root, message);
                 if (message["refusal"]?.Type == JTokenType.String)
                 {
-                    return ModelExtraction.Refused(message["refusal"]!.Value<string>()!);
+                    return ModelExtraction.Refused(message["refusal"]!.Value<string>()!, chatMetadata);
                 }
 
                 if (message["content"]?.Type != JTokenType.String)
@@ -435,7 +446,7 @@ namespace VizzyGPT.Core.Api
                         "Chat Completions assistant message must contain string content or refusal.");
                 }
 
-                return ModelExtraction.Output(message["content"]!.Value<string>()!);
+                return ModelExtraction.Output(message["content"]!.Value<string>()!, chatMetadata);
             }
             catch (Exception exception) when (
                 exception is JsonException ||
@@ -448,7 +459,7 @@ namespace VizzyGPT.Core.Api
             }
         }
 
-        private static AiResponse ParseEnvelope(string modelOutput)
+        private static AiResponse ParseEnvelope(string modelOutput, AiResponseMetadata metadata)
         {
             var root = ParseJsonObject(modelOutput, "patch envelope");
             var allowed = new HashSet<string>(new[] { "message", "patch" }, StringComparer.Ordinal);
@@ -481,7 +492,71 @@ namespace VizzyGPT.Core.Api
                 root["message"]!.Value<string>()!,
                 patch,
                 canApply: true,
-                Array.Empty<string>());
+                Array.Empty<string>(),
+                metadata);
+        }
+
+        private static AiResponseMetadata ExtractResponsesMetadata(JObject root)
+        {
+            var summaries = root["output"] is JArray output
+                ? output
+                    .OfType<JObject>()
+                    .Where(item =>
+                        string.Equals(item["type"]?.Value<string>(), "reasoning", StringComparison.Ordinal))
+                    .SelectMany(item => item["summary"] is JArray summary
+                        ? summary.OfType<JObject>()
+                        : Enumerable.Empty<JObject>())
+                    .Where(item =>
+                        string.Equals(item["type"]?.Value<string>(), "summary_text", StringComparison.Ordinal) &&
+                        item["text"]?.Type == JTokenType.String)
+                    .Select(item => item["text"]!.Value<string>()!)
+                    .Where(text => !string.IsNullOrWhiteSpace(text))
+                    .ToArray()
+                : Array.Empty<string>();
+            var usage = root["usage"] as JObject;
+            return new AiResponseMetadata(
+                summaries.Length == 0 ? null : string.Join("\n", summaries),
+                ReadNonNegativeInteger(usage?["input_tokens"]),
+                ReadNonNegativeInteger(usage?["output_tokens"]),
+                wasSchemaRepair: false);
+        }
+
+        private static AiResponseMetadata ExtractChatMetadata(JObject root, JObject message)
+        {
+            var reasoningSummary = message["reasoning_summary"]?.Type == JTokenType.String
+                ? message["reasoning_summary"]!.Value<string>()
+                : null;
+            var usage = root["usage"] as JObject;
+            return new AiResponseMetadata(
+                reasoningSummary,
+                ReadNonNegativeInteger(usage?["prompt_tokens"]),
+                ReadNonNegativeInteger(usage?["completion_tokens"]),
+                wasSchemaRepair: false);
+        }
+
+        private static int? ReadNonNegativeInteger(JToken? token)
+        {
+            if (token?.Type != JTokenType.Integer ||
+                !int.TryParse(
+                    token.ToString(Formatting.None),
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var value) ||
+                value < 0)
+            {
+                return null;
+            }
+
+            return value;
+        }
+
+        private static AiResponseMetadata WithSchemaRepair(AiResponseMetadata metadata)
+        {
+            return new AiResponseMetadata(
+                metadata.ReasoningSummary,
+                metadata.InputTokens,
+                metadata.OutputTokens,
+                wasSchemaRepair: true);
         }
 
         private static JObject NormalizePatchForDomain(JObject patchObject)
@@ -552,24 +627,30 @@ namespace VizzyGPT.Core.Api
 
         private sealed class ModelExtraction
         {
-            private ModelExtraction(string? modelOutput, string? refusal)
+            private ModelExtraction(
+                string? modelOutput,
+                string? refusal,
+                AiResponseMetadata metadata)
             {
                 ModelOutput = modelOutput;
                 Refusal = refusal;
+                Metadata = metadata;
             }
 
             public string? ModelOutput { get; }
 
             public string? Refusal { get; }
 
-            public static ModelExtraction Output(string value)
+            public AiResponseMetadata Metadata { get; }
+
+            public static ModelExtraction Output(string value, AiResponseMetadata metadata)
             {
-                return new ModelExtraction(value, null);
+                return new ModelExtraction(value, null, metadata);
             }
 
-            public static ModelExtraction Refused(string value)
+            public static ModelExtraction Refused(string value, AiResponseMetadata metadata)
             {
-                return new ModelExtraction(null, value);
+                return new ModelExtraction(null, value, metadata);
             }
         }
 

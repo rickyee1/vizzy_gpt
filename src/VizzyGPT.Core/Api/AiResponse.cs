@@ -12,7 +12,8 @@ namespace VizzyGPT.Core.Api
             string message,
             PatchDocument? patch,
             bool canApply,
-            IReadOnlyList<string> diagnostics)
+            IReadOnlyList<string> diagnostics,
+            AiResponseMetadata? metadata = null)
         {
             Message = message ?? throw new ArgumentNullException(nameof(message));
             Patch = patch;
@@ -28,6 +29,7 @@ namespace VizzyGPT.Core.Api
             }
 
             Diagnostics = new ReadOnlyCollection<string>(diagnostics.ToArray());
+            Metadata = metadata ?? AiResponseMetadata.Empty;
         }
 
         public string Message { get; }
@@ -37,5 +39,7 @@ namespace VizzyGPT.Core.Api
         public bool CanApply { get; }
 
         public IReadOnlyList<string> Diagnostics { get; }
+
+        public AiResponseMetadata Metadata { get; }
     }
 }
