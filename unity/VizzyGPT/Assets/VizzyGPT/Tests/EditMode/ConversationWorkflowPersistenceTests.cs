@@ -127,6 +127,71 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(store.Cleared, Is.EqualTo(new[] { "general-conversation" }));
         }
 
+        [UnityTest]
+        public System.Collections.IEnumerator Clear_in_progress_rejects_send_before_state_entries_or_transport()
+        {
+            var old = Message("old", ConversationRole.Assistant, "Earlier response.");
+            var store = new FakeConversationStore(
+                new ConversationHistory(1, "conversation-a", new[] { old }))
+            {
+                DelayClear = true
+            };
+            var transportCalls = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    transportCalls++;
+                    return Task.FromResult(new AiResponse(
+                        "Normal response.",
+                        null,
+                        false,
+                        Array.Empty<string>()));
+                },
+                store);
+            workflow.LoadConversationAsync().GetAwaiter().GetResult();
+            workflow.OpenPanel();
+
+            var clear = workflow.ClearConversationAsync();
+            Assert.That(store.ClearStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            var rejectedSend = workflow.SendPromptAsync("Blocked prompt.");
+            var rejectedBeforeClearCompleted = rejectedSend.IsCompleted;
+            var stateBeforeClearCompleted = workflow.State;
+            var entriesBeforeClearCompleted = workflow.CurrentRenderState.Entries
+                .Select(entry => entry.Text)
+                .ToArray();
+            var transportCallsBeforeClearCompleted = transportCalls;
+
+            store.CompleteClear();
+            while (!clear.IsCompleted || !rejectedSend.IsCompleted)
+            {
+                yield return null;
+            }
+
+            clear.GetAwaiter().GetResult();
+            var rejectedException = rejectedSend.Exception?.GetBaseException();
+
+            Assert.That(rejectedBeforeClearCompleted, Is.True);
+            Assert.That(rejectedException, Is.TypeOf<InvalidOperationException>());
+            Assert.That(rejectedException!.Message, Does.Contain("being cleared"));
+            Assert.That(stateBeforeClearCompleted, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(entriesBeforeClearCompleted, Is.EqualTo(new[] { "Earlier response." }));
+            Assert.That(transportCallsBeforeClearCompleted, Is.Zero);
+            Assert.That(transportCalls, Is.Zero);
+            Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
+
+            var normalSend = workflow.SendPromptAsync("Normal prompt.");
+            while (!normalSend.IsCompleted)
+            {
+                yield return null;
+            }
+
+            normalSend.GetAwaiter().GetResult();
+            Assert.That(transportCalls, Is.EqualTo(1));
+            Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                Is.EqualTo(new[] { "Normal prompt.", "Normal response." }));
+        }
+
         [Test]
         public void Terminal_response_restores_and_saves_the_active_history()
         {
@@ -393,6 +458,8 @@ namespace VizzyGPT.Tests.EditMode
         private sealed class FakeConversationStore : IConversationStore
         {
             private readonly ConversationHistory loaded;
+            private readonly TaskCompletionSource<bool> clearCompletion =
+                new TaskCompletionSource<bool>();
 
             public FakeConversationStore(ConversationHistory loaded)
             {
@@ -400,6 +467,8 @@ namespace VizzyGPT.Tests.EditMode
             }
 
             public bool ThrowOnSave { get; set; }
+            public bool DelayClear { get; set; }
+            public ManualResetEventSlim ClearStarted { get; } = new ManualResetEventSlim();
             public List<ConversationHistory> Saved { get; } = new List<ConversationHistory>();
             public List<(string ConversationId, string ProgramHash)> Linked { get; } =
                 new List<(string ConversationId, string ProgramHash)>();
@@ -439,7 +508,13 @@ namespace VizzyGPT.Tests.EditMode
                 CancellationToken cancellationToken = default)
             {
                 Cleared.Add(conversationId);
-                return Task.CompletedTask;
+                ClearStarted.Set();
+                return DelayClear ? clearCompletion.Task : Task.CompletedTask;
+            }
+
+            public void CompleteClear()
+            {
+                clearCompletion.TrySetResult(true);
             }
         }
 

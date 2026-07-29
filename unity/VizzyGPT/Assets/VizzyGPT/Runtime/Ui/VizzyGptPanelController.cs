@@ -228,6 +228,7 @@ namespace VizzyGPT.Runtime.Ui
         private readonly List<ConversationStageTiming> activeStages = new List<ConversationStageTiming>();
         private readonly SemaphoreSlim conversationLoadGate = new SemaphoreSlim(1, 1);
 
+        private int conversationClearInProgress;
         private CancellationTokenSource? requestCancellation;
         private ChangeSession? session;
         private AppliedChange? undoSession;
@@ -365,6 +366,12 @@ namespace VizzyGPT.Runtime.Ui
         public async Task SendPromptAsync(string prompt)
         {
             ThrowIfDisposed();
+            if (Volatile.Read(ref conversationClearInProgress) != 0)
+            {
+                throw new InvalidOperationException(
+                    "A request cannot be sent while conversation history is being cleared.");
+            }
+
             if (State == VizzyGptPanelState.Closed)
             {
                 Transition(VizzyGptPanelState.Error, "Open the panel before sending a request.");
@@ -543,46 +550,58 @@ namespace VizzyGPT.Runtime.Ui
         public async Task ClearConversationAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            await conversationLoadGate.WaitAsync(cancellationToken);
+            if (Interlocked.CompareExchange(ref conversationClearInProgress, 1, 0) != 0)
+            {
+                throw new InvalidOperationException("Conversation history is already being cleared.");
+            }
+
             try
             {
-                if (State == VizzyGptPanelState.Sending)
+                await conversationLoadGate.WaitAsync(cancellationToken);
+                try
                 {
-                    throw new InvalidOperationException(
-                        "Conversation history cannot be cleared while a request is in progress.");
-                }
+                    if (State == VizzyGptPanelState.Sending)
+                    {
+                        throw new InvalidOperationException(
+                            "Conversation history cannot be cleared while a request is in progress.");
+                    }
 
-                if (conversationStore == null)
-                {
+                    if (conversationStore == null)
+                    {
+                        messages.Clear();
+                        RenderState();
+                        return;
+                    }
+
+                    await EnsureConversationLoadedWhileLockedAsync(
+                        ResolveConversationProgramHash(),
+                        cancellationToken);
+                    if (conversationHistory == null)
+                    {
+                        throw new InvalidOperationException("The active conversation is unavailable.");
+                    }
+
+                    await conversationStore.ClearAsync(
+                        conversationHistory.ConversationId,
+                        cancellationToken);
+                    conversationHistory = new ConversationHistory(
+                        conversationHistory.SchemaVersion,
+                        conversationHistory.ConversationId,
+                        Array.Empty<ConversationMessage>());
                     messages.Clear();
+                    activeEntryId = null;
+                    activeStages.Clear();
+                    activeStage = null;
                     RenderState();
-                    return;
                 }
-
-                await EnsureConversationLoadedWhileLockedAsync(
-                    ResolveConversationProgramHash(),
-                    cancellationToken);
-                if (conversationHistory == null)
+                finally
                 {
-                    throw new InvalidOperationException("The active conversation is unavailable.");
+                    conversationLoadGate.Release();
                 }
-
-                await conversationStore.ClearAsync(
-                    conversationHistory.ConversationId,
-                    cancellationToken);
-                conversationHistory = new ConversationHistory(
-                    conversationHistory.SchemaVersion,
-                    conversationHistory.ConversationId,
-                    Array.Empty<ConversationMessage>());
-                messages.Clear();
-                activeEntryId = null;
-                activeStages.Clear();
-                activeStage = null;
-                RenderState();
             }
             finally
             {
-                conversationLoadGate.Release();
+                Volatile.Write(ref conversationClearInProgress, 0);
             }
         }
 
