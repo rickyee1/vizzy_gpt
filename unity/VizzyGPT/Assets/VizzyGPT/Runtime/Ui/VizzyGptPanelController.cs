@@ -1493,6 +1493,15 @@ namespace VizzyGPT.Runtime.Ui
 
     public sealed class VizzyGptPanelController : MonoBehaviour
     {
+        private const float PreferredPanelWidth = 500f;
+        private const float PreferredPanelHeight = 700f;
+        private const float PanelMargin = 32f;
+        private const float PreferredInnerWidth = 468f;
+        private const float PreferredModeGroupWidth = 280f;
+        private const float PreferredToggleWidth = 138f;
+        private const float ModeLabelGap = 12f;
+        private const float ToggleGap = 4f;
+
         private VizzyGptPanelWorkflow? workflow;
         private string prompt = string.Empty;
         private Action? openSettings;
@@ -1501,6 +1510,11 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_FontAsset? expectedCjkFont;
         private ConversationMessageListView? messageList;
         private RectTransform? panelRoot;
+        private RectTransform? modePanel;
+        private RectTransform? modeLabel;
+        private RectTransform? modeToggleGroup;
+        private RectTransform? askToggleRect;
+        private RectTransform? modifyToggleRect;
         private Button? launcherButton;
         private Button? sendButton;
         private Button? cancelButton;
@@ -1541,16 +1555,18 @@ namespace VizzyGPT.Runtime.Ui
             var conversationScroll = RequireElement<ScrollRect>(layout, "conversation-scroll");
             var conversationContent = RequireElement<RectTransform>(layout, "conversation-content");
             panelRoot = RequireElement<RectTransform>(layout, "vizzy-gpt-panel");
-            var modePanel = RequireElement<RectTransform>(layout, "mode-panel");
-            ConstrainPanelToParent(panelRoot);
-            ConstrainPanelChildWidth(panelRoot, (RectTransform)composerInput.transform);
-            ConstrainPanelChildWidth(panelRoot, modePanel);
+            modePanel = RequireElement<RectTransform>(layout, "mode-panel");
+            modeLabel = RequireElement<RectTransform>(layout, "mode-label");
+            modeToggleGroup = RequireElement<RectTransform>(layout, "mode-toggle-group");
             launcherButton = RequireElement<Button>(layout, "gpt-launcher-button");
             sendButton = RequireElement<Button>(layout, "send-button");
             cancelButton = RequireElement<Button>(layout, "cancel-request-button");
             undoButton = RequireElement<Button>(layout, "undo-button");
             askToggle = RequireElement<Toggle>(layout, "ask-toggle");
             modifyToggle = RequireElement<Toggle>(layout, "modify-toggle");
+            askToggleRect = (RectTransform)askToggle.transform;
+            modifyToggleRect = (RectTransform)modifyToggle.transform;
+            RefreshResponsiveLayout();
 
             expectedCjkFont = cjkFont;
             CjkTextFontApplicator.ApplyToInput(composerInput, cjkFont);
@@ -1730,6 +1746,7 @@ namespace VizzyGPT.Runtime.Ui
 
         private void Update()
         {
+            RefreshResponsiveLayout();
             if (workflow == null || Time.unscaledTime < nextElapsedRefreshTime)
             {
                 return;
@@ -1756,32 +1773,62 @@ namespace VizzyGPT.Runtime.Ui
                 throw new InvalidOperationException("Vizzy GPT XML is missing required " + typeof(T).Name + " '" + id + "'.");
         }
 
-        private static void ConstrainPanelToParent(RectTransform panel)
+        private void RefreshResponsiveLayout()
         {
-            if (!(panel.parent is RectTransform parent))
+            if (panelRoot == null || !(panelRoot.parent is RectTransform parent))
             {
                 return;
             }
 
-            var availableWidth = parent.rect.width - 32f;
-            var availableHeight = parent.rect.height - 32f;
-            if (availableWidth > 0f && panel.rect.width > availableWidth)
+            var panelWidth = ResolveResponsiveSize(PreferredPanelWidth, parent.rect.width - PanelMargin);
+            var panelHeight = ResolveResponsiveSize(PreferredPanelHeight, parent.rect.height - PanelMargin);
+            SetSize(panelRoot, RectTransform.Axis.Horizontal, panelWidth);
+            SetSize(panelRoot, RectTransform.Axis.Vertical, panelHeight);
+
+            var innerWidth = ResolveResponsiveSize(PreferredInnerWidth, panelWidth - PanelMargin);
+            if (composerInput != null)
             {
-                panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, availableWidth);
+                SetSize((RectTransform)composerInput.transform, RectTransform.Axis.Horizontal, innerWidth);
             }
 
-            if (availableHeight > 0f && panel.rect.height > availableHeight)
+            if (modePanel == null)
             {
-                panel.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, availableHeight);
+                return;
             }
+
+            SetSize(modePanel, RectTransform.Axis.Horizontal, innerWidth);
+            if (modeLabel == null || modeToggleGroup == null)
+            {
+                return;
+            }
+
+            var availableGroupWidth = Mathf.Max(0f, innerWidth - modeLabel.rect.width - ModeLabelGap);
+            var groupWidth = Mathf.Min(PreferredModeGroupWidth, availableGroupWidth);
+            SetSize(modeToggleGroup, RectTransform.Axis.Horizontal, groupWidth);
+
+            var toggleWidth = Mathf.Min(
+                PreferredToggleWidth,
+                Mathf.Max(0f, (groupWidth - ToggleGap) * 0.5f));
+            SetSize(askToggleRect, RectTransform.Axis.Horizontal, toggleWidth);
+            SetSize(modifyToggleRect, RectTransform.Axis.Horizontal, toggleWidth);
         }
 
-        private static void ConstrainPanelChildWidth(RectTransform panel, RectTransform child)
+        private static float ResolveResponsiveSize(float preferred, float available)
         {
-            var availableWidth = panel.rect.width - 32f;
-            if (availableWidth > 0f && child.rect.width > availableWidth)
+            return available > 0f ? Mathf.Min(preferred, available) : preferred;
+        }
+
+        private static void SetSize(RectTransform? rect, RectTransform.Axis axis, float value)
+        {
+            if (rect == null)
             {
-                child.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, availableWidth);
+                return;
+            }
+
+            var current = axis == RectTransform.Axis.Horizontal ? rect.rect.width : rect.rect.height;
+            if (Mathf.Abs(current - value) > 0.01f)
+            {
+                rect.SetSizeWithCurrentAnchors(axis, value);
             }
         }
 

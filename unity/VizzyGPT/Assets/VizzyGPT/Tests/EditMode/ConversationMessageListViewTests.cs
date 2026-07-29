@@ -94,14 +94,25 @@ namespace VizzyGPT.Tests.EditMode
                     fixture.Font,
                     () => { },
                     gameObject => gameObject.AddComponent<TestTmpText>());
-                fixture.Content.anchoredPosition = new Vector2(0, 200);
+                fixture.View.Render(new[]
+                {
+                    Entry("user-1", ConversationRole.User, "\u4F60\u597D"),
+                    Entry("assistant-1", ConversationRole.Assistant, "\u5DF2\u5B8C\u6210", reasoning: "\u601D\u8003"),
+                    Entry("user-2", ConversationRole.User, "\u7EE7\u7EED"),
+                    Entry("assistant-2", ConversationRole.Assistant, "\u5B8C\u6210")
+                });
+                Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
+                fixture.Scroll.verticalNormalizedPosition = 0.65f;
                 fixture.Scroll.Rebuild(CanvasUpdate.PostLayout);
                 var manualPosition = fixture.Scroll.verticalNormalizedPosition;
                 Assert.That(manualPosition, Is.GreaterThan(0.05f));
                 fixture.View.Render(new[]
                 {
                     Entry("user-1", ConversationRole.User, "\u4F60\u597D"),
-                    Entry("assistant-1", ConversationRole.Assistant, "\u5DF2\u5B8C\u6210", reasoning: "\u601D\u8003")
+                    Entry("assistant-1", ConversationRole.Assistant, "\u5DF2\u5B8C\u6210", reasoning: "\u601D\u8003"),
+                    Entry("user-2", ConversationRole.User, "\u7EE7\u7EED"),
+                    Entry("assistant-2", ConversationRole.Assistant, "\u5B8C\u6210"),
+                    Entry("user-3", ConversationRole.User, "\u66F4\u591A")
                 });
 
                 Assert.That(fixture.Scroll.verticalNormalizedPosition, Is.EqualTo(manualPosition).Within(0.001f));
@@ -121,7 +132,7 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
-        public void Render_scrolls_first_message_and_bottom_completion_to_the_bottom()
+        public void Render_follows_bottom_when_non_scrollable_content_becomes_scrollable()
         {
             using (var fixture = new ViewFixture())
             {
@@ -133,22 +144,87 @@ namespace VizzyGPT.Tests.EditMode
                     fixture.Font,
                     () => { },
                     gameObject => gameObject.AddComponent<TestTmpText>());
-                fixture.Scroll.verticalNormalizedPosition = 1f;
 
                 fixture.View.Render(new[]
                 {
                     Entry("user-1", ConversationRole.User, "hello")
                 });
 
-                Assert.That(fixture.Scroll.verticalNormalizedPosition, Is.Zero);
+                Assert.That(fixture.Content.rect.height, Is.LessThanOrEqualTo(fixture.Scroll.viewport.rect.height));
+                fixture.Content.anchoredPosition = new Vector2(0f, -100f);
+                fixture.Scroll.Rebuild(CanvasUpdate.PostLayout);
+                Assert.That(
+                    fixture.Scroll.verticalNormalizedPosition,
+                    Is.GreaterThan(0.95f),
+                    "The test must reproduce Unity's ambiguous top value for non-scrollable content.");
 
                 fixture.View.Render(new[]
                 {
                     Entry("user-1", ConversationRole.User, "hello"),
-                    Entry("assistant-1", ConversationRole.Assistant, "done")
+                    Entry("assistant-1", ConversationRole.Assistant, "done"),
+                    Entry("user-2", ConversationRole.User, "more"),
+                    Entry("assistant-2", ConversationRole.Assistant, "more"),
+                    Entry("user-3", ConversationRole.User, "more"),
+                    Entry("assistant-3", ConversationRole.Assistant, "done")
                 });
 
+                Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
                 Assert.That(fixture.Scroll.verticalNormalizedPosition, Is.Zero);
+            }
+        }
+
+        [Test]
+        public void Disclosure_and_preview_labels_remain_single_line_inside_narrow_buttons()
+        {
+            using (var fixture = new ViewFixture())
+            {
+                fixture.SetWidth(120f);
+                fixture.View = new ConversationMessageListView(
+                    fixture.Content,
+                    fixture.Scroll,
+                    fixture.Composer,
+                    fixture.Font,
+                    () => { },
+                    gameObject => gameObject.AddComponent<TestTmpText>());
+
+                fixture.View.Render(new[]
+                {
+                    Entry(
+                        "assistant-1",
+                        ConversationRole.Assistant,
+                        "done",
+                        reasoning: "reasoning",
+                        stages: new[] { new ConversationStageTiming("WaitingForModel", 12345.7) },
+                        error: new ConversationError(
+                            "invalid_patch",
+                            "ValidatingPatch",
+                            "message",
+                            "technical details",
+                            "/Program"),
+                        canPreview: true)
+                });
+
+                foreach (var buttonName in new[]
+                {
+                    "message-assistant-1-reasoning-button",
+                    "message-assistant-1-error-button",
+                    "message-assistant-1-preview-button"
+                })
+                {
+                    var button = fixture.Find(buttonName);
+                    var label = button.GetComponentInChildren<TMP_Text>(true);
+                    var buttonLayout = button.GetComponent<LayoutElement>();
+                    var labelLayout = label.GetComponent<LayoutElement>();
+
+                    Assert.That(label.enableWordWrapping, Is.False, buttonName);
+                    Assert.That(label.overflowMode, Is.EqualTo(TextOverflowModes.Ellipsis), buttonName);
+                    Assert.That(
+                        buttonLayout.preferredHeight,
+                        Is.GreaterThanOrEqualTo(labelLayout.minHeight + 6f),
+                        buttonName);
+                    Assert.That(((RectTransform)label.transform).offsetMin.y, Is.GreaterThanOrEqualTo(0f), buttonName);
+                    Assert.That(((RectTransform)label.transform).offsetMax.y, Is.LessThanOrEqualTo(0f), buttonName);
+                }
             }
         }
 
@@ -215,6 +291,13 @@ namespace VizzyGPT.Tests.EditMode
             public TMP_FontAsset StockFont { get; }
             public Material FontMaterial { get; }
             public Material StockFontMaterial { get; }
+
+            public void SetWidth(float width)
+            {
+                ((RectTransform)root.transform).SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+                Content.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+                Composer.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+            }
 
             public GameObject Find(string name)
             {

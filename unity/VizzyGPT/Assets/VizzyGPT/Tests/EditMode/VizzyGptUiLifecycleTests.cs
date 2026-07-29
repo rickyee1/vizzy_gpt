@@ -330,6 +330,46 @@ namespace VizzyGPT.Tests.EditMode
                     Assert.That(((RectTransform)fixture.Root.transform).rect.height, Is.LessThanOrEqualTo(448));
                     Assert.That(fixture.Composer.GetComponent<RectTransform>().rect.width, Is.LessThanOrEqualTo(256));
                     Assert.That(fixture.ModePanel.rect.width, Is.LessThanOrEqualTo(256));
+                    AssertResponsiveModeGeometry(fixture);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(parent);
+            }
+        }
+
+        [Test]
+        public void Panel_update_tracks_parent_resize_and_restores_preferred_geometry()
+        {
+            var parent = new GameObject("resizable-canvas", typeof(RectTransform));
+            var parentRect = (RectTransform)parent.transform;
+            parentRect.sizeDelta = new Vector2(900, 900);
+            try
+            {
+                using (var fixture = new PanelFixture())
+                {
+                    fixture.Root.transform.SetParent(parent.transform, false);
+                    fixture.Panel.Bind(
+                        fixture.Layout,
+                        null,
+                        gameObject => gameObject.AddComponent<TestTmpText>());
+
+                    AssertPreferredPanelGeometry(fixture);
+
+                    parentRect.sizeDelta = new Vector2(320, 480);
+                    GetPrivateMethod(fixture.Panel, "Update").Invoke(fixture.Panel, null);
+
+                    Assert.That(((RectTransform)fixture.Root.transform).rect.width, Is.EqualTo(288f).Within(0.01f));
+                    Assert.That(((RectTransform)fixture.Root.transform).rect.height, Is.EqualTo(448f).Within(0.01f));
+                    Assert.That(fixture.Composer.GetComponent<RectTransform>().rect.width, Is.EqualTo(256f).Within(0.01f));
+                    Assert.That(fixture.ModePanel.rect.width, Is.EqualTo(256f).Within(0.01f));
+                    AssertResponsiveModeGeometry(fixture);
+
+                    parentRect.sizeDelta = new Vector2(900, 900);
+                    GetPrivateMethod(fixture.Panel, "Update").Invoke(fixture.Panel, null);
+
+                    AssertPreferredPanelGeometry(fixture);
                 }
             }
             finally
@@ -452,6 +492,41 @@ namespace VizzyGPT.Tests.EditMode
             return text;
         }
 
+        private static void AssertPreferredPanelGeometry(PanelFixture fixture)
+        {
+            Assert.That(((RectTransform)fixture.Root.transform).rect.width, Is.EqualTo(500f).Within(0.01f));
+            Assert.That(((RectTransform)fixture.Root.transform).rect.height, Is.EqualTo(700f).Within(0.01f));
+            Assert.That(fixture.Composer.GetComponent<RectTransform>().rect.width, Is.EqualTo(468f).Within(0.01f));
+            Assert.That(fixture.ModePanel.rect.width, Is.EqualTo(468f).Within(0.01f));
+            Assert.That(fixture.ModeToggleGroup.rect.width, Is.EqualTo(280f).Within(0.01f));
+            Assert.That(fixture.AskToggle.rect.width, Is.EqualTo(138f).Within(0.01f));
+            Assert.That(fixture.ModifyToggle.rect.width, Is.EqualTo(138f).Within(0.01f));
+            AssertResponsiveModeGeometry(fixture);
+        }
+
+        private static void AssertResponsiveModeGeometry(PanelFixture fixture)
+        {
+            var labelBounds = RectTransformUtility.CalculateRelativeRectTransformBounds(
+                fixture.ModePanel,
+                fixture.ModeLabel);
+            var groupBounds = RectTransformUtility.CalculateRelativeRectTransformBounds(
+                fixture.ModePanel,
+                fixture.ModeToggleGroup);
+            var askBounds = RectTransformUtility.CalculateRelativeRectTransformBounds(
+                fixture.ModeToggleGroup,
+                fixture.AskToggle);
+            var modifyBounds = RectTransformUtility.CalculateRelativeRectTransformBounds(
+                fixture.ModeToggleGroup,
+                fixture.ModifyToggle);
+
+            Assert.That(groupBounds.min.x, Is.GreaterThanOrEqualTo(labelBounds.max.x + 12f - 0.01f));
+            Assert.That(groupBounds.min.x, Is.GreaterThanOrEqualTo(fixture.ModePanel.rect.xMin - 0.01f));
+            Assert.That(groupBounds.max.x, Is.LessThanOrEqualTo(fixture.ModePanel.rect.xMax + 0.01f));
+            Assert.That(askBounds.min.x, Is.GreaterThanOrEqualTo(fixture.ModeToggleGroup.rect.xMin - 0.01f));
+            Assert.That(modifyBounds.max.x, Is.LessThanOrEqualTo(fixture.ModeToggleGroup.rect.xMax + 0.01f));
+            Assert.That(askBounds.max.x, Is.LessThanOrEqualTo(modifyBounds.min.x + 0.01f));
+        }
+
         private static T CreateComponent<T>(Transform parent, string name) where T : Component
         {
             var component = new GameObject(name, typeof(RectTransform)).AddComponent<T>();
@@ -505,8 +580,9 @@ namespace VizzyGPT.Tests.EditMode
             public PanelFixture()
             {
                 Root = new GameObject("panel-layout", typeof(RectTransform));
+                ((RectTransform)Root.transform).sizeDelta = new Vector2(500, 700);
                 Composer = new GameObject("composer-input", typeof(RectTransform)).AddComponent<TMP_InputField>();
-                Composer.transform.SetParent(Root.transform);
+                Composer.transform.SetParent(Root.transform, false);
                 Composer.GetComponent<RectTransform>().sizeDelta = new Vector2(468, 88);
                 var composerText = CreateText(Composer.transform, "composer-text");
                 var composerPlaceholder = CreateText(Composer.transform, "composer-placeholder");
@@ -514,10 +590,10 @@ namespace VizzyGPT.Tests.EditMode
                 Composer.placeholder = composerPlaceholder;
 
                 var viewport = new GameObject("conversation-scroll", typeof(RectTransform), typeof(ScrollRect));
-                viewport.transform.SetParent(Root.transform);
+                viewport.transform.SetParent(Root.transform, false);
                 Scroll = viewport.GetComponent<ScrollRect>();
                 Content = (RectTransform)new GameObject("conversation-content", typeof(RectTransform)).transform;
-                Content.SetParent(viewport.transform);
+                Content.SetParent(viewport.transform, false);
                 Scroll.viewport = (RectTransform)viewport.transform;
                 Scroll.content = Content;
                 Send = CreateComponent<Button>(Root.transform, "send-button");
@@ -525,8 +601,18 @@ namespace VizzyGPT.Tests.EditMode
                 Send.GetComponent<RectTransform>().anchoredPosition = new Vector2(-12, 0);
                 Cancel.GetComponent<RectTransform>().anchoredPosition = new Vector2(-12, 0);
                 ModePanel = (RectTransform)new GameObject("mode-panel", typeof(RectTransform)).transform;
-                ModePanel.SetParent(Root.transform);
+                ModePanel.SetParent(Root.transform, false);
                 ModePanel.sizeDelta = new Vector2(468, 48);
+                ModeLabel = (RectTransform)new GameObject("mode-label", typeof(RectTransform)).transform;
+                ModeLabel.SetParent(ModePanel, false);
+                ConfigureRect(ModeLabel, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), 80f, 20f);
+                ModeToggleGroup = (RectTransform)new GameObject("mode-toggle-group", typeof(RectTransform)).transform;
+                ModeToggleGroup.SetParent(ModePanel, false);
+                ConfigureRect(ModeToggleGroup, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f), 280f, 25f);
+                AskToggle = CreateComponent<Toggle>(ModeToggleGroup, "ask-toggle").GetComponent<RectTransform>();
+                ConfigureRect(AskToggle, Vector2.zero, Vector2.zero, Vector2.zero, 138f, 25f);
+                ModifyToggle = CreateComponent<Toggle>(ModeToggleGroup, "modify-toggle").GetComponent<RectTransform>();
+                ConfigureRect(ModifyToggle, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f), 138f, 25f);
 
                 Layout = new FakeXmlLayout(Root, new Dictionary<string, Component>
                 {
@@ -535,12 +621,14 @@ namespace VizzyGPT.Tests.EditMode
                     ["conversation-content"] = Content,
                     ["vizzy-gpt-panel"] = (RectTransform)Root.transform,
                     ["mode-panel"] = ModePanel,
+                    ["mode-label"] = ModeLabel,
+                    ["mode-toggle-group"] = ModeToggleGroup,
                     ["gpt-launcher-button"] = CreateComponent<Button>(Root.transform, "gpt-launcher-button"),
                     ["send-button"] = Send,
                     ["cancel-request-button"] = Cancel,
                     ["undo-button"] = CreateComponent<Button>(Root.transform, "undo-button"),
-                    ["ask-toggle"] = CreateComponent<Toggle>(Root.transform, "ask-toggle"),
-                    ["modify-toggle"] = CreateComponent<Toggle>(Root.transform, "modify-toggle")
+                    ["ask-toggle"] = AskToggle.GetComponent<Toggle>(),
+                    ["modify-toggle"] = ModifyToggle.GetComponent<Toggle>()
                 });
                 Panel = Root.AddComponent<VizzyGptPanelController>();
             }
@@ -549,6 +637,10 @@ namespace VizzyGPT.Tests.EditMode
             public TMP_InputField Composer { get; }
             public RectTransform Content { get; }
             public RectTransform ModePanel { get; }
+            public RectTransform ModeLabel { get; }
+            public RectTransform ModeToggleGroup { get; }
+            public RectTransform AskToggle { get; }
+            public RectTransform ModifyToggle { get; }
             public ScrollRect Scroll { get; }
             public Button Send { get; }
             public Button Cancel { get; }
@@ -565,6 +657,21 @@ namespace VizzyGPT.Tests.EditMode
             public void Dispose()
             {
                 UnityEngine.Object.DestroyImmediate(Root);
+            }
+
+            private static void ConfigureRect(
+                RectTransform rect,
+                Vector2 anchorMin,
+                Vector2 anchorMax,
+                Vector2 pivot,
+                float width,
+                float height)
+            {
+                rect.anchorMin = anchorMin;
+                rect.anchorMax = anchorMax;
+                rect.pivot = pivot;
+                rect.anchoredPosition = Vector2.zero;
+                rect.sizeDelta = new Vector2(width, height);
             }
         }
 

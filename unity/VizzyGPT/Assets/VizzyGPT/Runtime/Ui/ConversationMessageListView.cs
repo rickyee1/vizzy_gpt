@@ -25,6 +25,8 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Dictionary<string, MessageRow> rows = new Dictionary<string, MessageRow>();
         private readonly HashSet<string> expandedReasoning = new HashSet<string>();
         private readonly HashSet<string> expandedErrors = new HashSet<string>();
+        private bool hasRendered;
+        private bool followBottom = true;
         private bool disposed;
 
         public ConversationMessageListView(
@@ -54,7 +56,11 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var preserveScrollPosition = scroll.verticalNormalizedPosition;
-            var shouldScrollToBottom = preserveScrollPosition <= BottomThreshold;
+            if (hasRendered && IsScrollable())
+            {
+                followBottom = preserveScrollPosition <= BottomThreshold;
+            }
+
             var activeIds = new HashSet<string>(entries.Select(entry => entry.Id));
             foreach (var staleId in rows.Keys.Where(id => !activeIds.Contains(id)).ToArray())
             {
@@ -80,7 +86,8 @@ namespace VizzyGPT.Runtime.Ui
             Canvas.ForceUpdateCanvases();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
             Canvas.ForceUpdateCanvases();
-            scroll.verticalNormalizedPosition = shouldScrollToBottom ? 0f : preserveScrollPosition;
+            scroll.verticalNormalizedPosition = followBottom ? 0f : preserveScrollPosition;
+            hasRendered = true;
         }
 
         public void RefreshDynamicTextFonts()
@@ -262,8 +269,16 @@ namespace VizzyGPT.Runtime.Ui
             rect.offsetMin = new Vector2(8f, 3f);
             rect.offsetMax = new Vector2(-8f, -3f);
             text.alignment = TextAlignmentOptions.MidlineLeft;
+            text.enableWordWrapping = false;
+            text.overflowMode = TextOverflowModes.Ellipsis;
             text.text = label;
             return gameObject.GetComponent<Button>();
+        }
+
+        private bool IsScrollable()
+        {
+            var viewport = scroll.viewport ?? scroll.GetComponent<RectTransform>();
+            return viewport != null && content.rect.height > viewport.rect.height + 0.5f;
         }
 
         private void RefreshRowFonts(MessageRow row)

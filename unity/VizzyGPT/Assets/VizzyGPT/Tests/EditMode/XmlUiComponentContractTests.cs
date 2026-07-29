@@ -15,7 +15,8 @@ namespace VizzyGPT.Tests.EditMode
         private static readonly string[] PanelIds =
         {
             "gpt-launcher-button", "vizzy-gpt-panel", "settings-button", "close-button",
-            "mode-panel", "ask-toggle", "modify-toggle", "conversation-scroll", "conversation-content",
+            "mode-panel", "mode-label", "mode-toggle-group", "ask-toggle", "modify-toggle",
+            "conversation-scroll", "conversation-content",
             "composer-input", "undo-button", "send-button", "cancel-request-button"
         };
 
