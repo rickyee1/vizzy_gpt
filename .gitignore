@@ -1,0 +1,22 @@
+.worktrees/
+.superpowers/
+bin/
+obj/
+
+# Accidental/root Unity project artifacts and local logs.
+/Assets/
+/Library/
+/Logs/
+/Packages/
+/ProjectSettings/
+/UserSettings/
+/artifacts/
+
+# Unity project generated and locally imported content.
+/unity/VizzyGPT/Library/
+/unity/VizzyGPT/Logs/
+/unity/VizzyGPT/Temp/
+/unity/VizzyGPT/Obj/
+/unity/VizzyGPT/UserSettings/
+/unity/VizzyGPT/Assets/ModTools/
+/unity/VizzyGPT/Assets/ModTools.meta

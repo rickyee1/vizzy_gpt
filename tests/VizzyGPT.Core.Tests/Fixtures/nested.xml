@@ -1,0 +1,90 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Program name="NestedFixture">
+  <Variables>
+    <Variable name="pitch" number="0" />
+  </Variables>
+  <Instructions>
+    <Event event="FlightStart" id="0" style="flight-start" pos="-25.18216,-375.5146" />
+    <While id="1" style="while">
+      <Constant style="true" bool="true" />
+      <Instructions>
+        <If id="2" style="if">
+          <ActivationGroup style="activation-group">
+            <Constant text="1" />
+          </ActivationGroup>
+          <Instructions>
+            <SetVariable id="3" style="set-variable">
+              <Variable list="false" local="false" variableName="pitch" />
+              <BinaryOp op="max" style="op-max">
+                <Constant text="-1" />
+                <BinaryOp op="min" style="op-min">
+                  <Constant text="1" />
+                  <BinaryOp op="+" style="op-add">
+                    <BinaryOp op="*" style="op-mul">
+                      <Constant text="0.1" />
+                      <BinaryOp op="+" style="op-add">
+                        <CraftProperty property="Nav.AngleOfAttack" style="prop-nav" />
+                        <BinaryOp op="*" style="op-mul">
+                          <Constant text="20" />
+                          <CraftProperty property="Input.Pitch" style="prop-input" />
+                        </BinaryOp>
+                      </BinaryOp>
+                    </BinaryOp>
+                    <BinaryOp op="*" style="op-mul">
+                      <BinaryOp op="max" style="op-max">
+                        <BinaryOp op="-" style="op-sub">
+                          <Constant text="1.5" />
+                          <CraftProperty property="Vel.MachNumber" style="prop-velocity" />
+                        </BinaryOp>
+                        <Constant number="0" />
+                      </BinaryOp>
+                      <VectorOp op="x" style="vec-op-1">
+                        <CraftProperty property="Vel.AngularVelocity" style="prop-velocity" />
+                      </VectorOp>
+                    </BinaryOp>
+                  </BinaryOp>
+                </BinaryOp>
+              </BinaryOp>
+            </SetVariable>
+          </Instructions>
+        </If>
+        <ElseIf id="4" style="else">
+          <Constant bool="true" />
+          <Instructions>
+            <SetVariable id="5" style="set-variable">
+              <Variable list="false" local="false" variableName="pitch" />
+              <BinaryOp op="max" style="op-max">
+                <Constant text="-1" />
+                <BinaryOp op="min" style="op-min">
+                  <Constant text="1" />
+                  <BinaryOp op="+" style="op-add">
+                    <CraftProperty property="Input.Pitch" style="prop-input" />
+                    <BinaryOp op="+" style="op-add">
+                      <BinaryOp op="*" style="op-mul">
+                        <Constant text="0.1" />
+                        <CraftProperty property="Nav.AngleOfAttack" style="prop-nav" />
+                      </BinaryOp>
+                      <BinaryOp op="*" style="op-mul">
+                        <BinaryOp op="max" style="op-max">
+                          <BinaryOp op="-" style="op-sub">
+                            <Constant text="1.5" />
+                            <CraftProperty property="Vel.MachNumber" style="prop-velocity" />
+                          </BinaryOp>
+                          <Constant number="0" />
+                        </BinaryOp>
+                        <VectorOp op="x" style="vec-op-1">
+                          <CraftProperty property="Vel.AngularVelocity" style="prop-velocity" />
+                        </VectorOp>
+                      </BinaryOp>
+                    </BinaryOp>
+                  </BinaryOp>
+                </BinaryOp>
+              </BinaryOp>
+            </SetVariable>
+          </Instructions>
+        </ElseIf>
+      </Instructions>
+    </While>
+  </Instructions>
+  <Expressions />
+</Program>

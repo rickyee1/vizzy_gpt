@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<XmlLayout xmlns="http://www.w3schools.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\..\..\..\ModTools\UI\XmlLayout.xsd">
+  <Include path="Ui/Xml/Styles.xml" />
+  <Panel id="settings-dialog" class="dialog-background">
+    <Panel id="settings-dialog-content" class="panel border" width="600" height="520">
+      <TextMeshPro id="settings-title" text="Vizzy GPT Settings" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -52" offsetMax="400 -20" />
+      <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="12" anchorMin="0 0" anchorMax="1 1" offsetMin="20 75" offsetMax="-20 -70">
+        <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="Model" class="label" /><TextMeshProInputField id="model-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="API key" class="label" /><TextMeshProInputField id="api-key-input" lineType="SingleLine" contentType="Password"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro text="Timeout seconds" class="label" /><TextMeshProInputField id="timeout-input" lineType="SingleLine" contentType="IntegerNumber"><TMP_Text color="White" /></TextMeshProInputField>
+        <TextMeshPro id="destination-host-text" class="value" />
+        <TextMeshPro id="connection-status-text" class="label" />
+      </VerticalLayout>
+      <Button id="test-button" class="btn" rectAlignment="LowerLeft" width="160" offsetXY="20 20" onClick="OnTestConnectionButtonClicked();"><TextMeshPro text="Test Connection" /></Button>
+      <Button id="cancel-button" class="btn" rectAlignment="LowerCenter" width="130" offsetXY="0 20" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
+      <Button id="save-button" class="btn btn-primary" rectAlignment="LowerRight" width="130" offsetXY="-20 20" onClick="OnSaveButtonClicked();"><TextMeshPro text="Save" /></Button>
+    </Panel>
+  </Panel>
+</XmlLayout>

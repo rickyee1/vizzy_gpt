@@ -1,0 +1,27 @@
+{
+  "name": "VizzyGPT.EditModeTests",
+  "rootNamespace": "VizzyGPT.Tests.EditMode",
+  "references": [
+    "VizzyGPT.Runtime",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "ModApi.dll",
+    "ModApi.Core.dll",
+    "VizzyGPT.Core.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

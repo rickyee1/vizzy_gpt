@@ -1,0 +1,13 @@
+{
+  "name": "VizzyGPT.Runtime",
+  "rootNamespace": "VizzyGPT.Runtime",
+  "references": [
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "autoReferenced": true
+}

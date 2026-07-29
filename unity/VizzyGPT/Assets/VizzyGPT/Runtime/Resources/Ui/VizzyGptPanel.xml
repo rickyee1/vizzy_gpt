@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<XmlLayout xmlns="http://www.w3schools.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\..\..\..\ModTools\UI\XmlLayout.xsd">
+  <Include path="Ui/Xml/Styles.xml" />
+  <Button id="gpt-launcher-button" class="icon-button" rectAlignment="MiddleRight" offsetXY="-12 0" icon="Ui/Sprites/Common/IconButtonMenu" onClick="OnOpenPanelButtonClicked();" tooltip="Open Vizzy GPT" tooltipPosition="Left" />
+  <Panel id="vizzy-gpt-panel" class="panel border" rectAlignment="MiddleRight" width="420" height="620" offsetXY="-16 0" active="false">
+    <TextMeshPro id="panel-title" text="Vizzy GPT" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="12 -44" offsetMax="240 -12" />
+    <Button id="settings-button" class="icon-button" rectAlignment="UpperRight" offsetXY="-12 -12" icon="Ui/Sprites/Common/IconSettings" onClick="OnSettingsButtonClicked();" tooltip="Settings" tooltipPosition="Left" />
+    <Button id="close-button" class="icon-button" rectAlignment="UpperRight" offsetXY="-60 -12" icon="Ui/Sprites/Common/IconCloseButton" onClick="OnClosePanelButtonClicked();" tooltip="Close" tooltipPosition="Left" />
+    <Panel id="mode-panel" class="no-image" rectAlignment="UpperCenter" width="396" height="48" offsetXY="0 -52">
+      <TextMeshPro id="mode-label" text="Mode" class="label" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="0 -20" offsetMax="80 0" />
+      <ToggleGroup id="mode-toggle-group" allowSwitchOff="false" rectAlignment="LowerRight" width="280" height="25">
+        <ToggleButton id="ask-toggle" isOn="true" onValueChanged="OnAskModeClicked();" prefabPath="Ui/Prefabs/XmlLayout/ToggleButton" image="" colors="Button|ButtonHover|Button|Button" textColors="White|White|White|White" rectAlignment="LowerLeft" width="138" height="25" deselectedBackgroundColor="Button" selectedBackgroundColor="Primary">
+          <TextMeshPro text="Ask" />
+        </ToggleButton>
+        <ToggleButton id="modify-toggle" onValueChanged="OnModifyModeClicked();" prefabPath="Ui/Prefabs/XmlLayout/ToggleButton" image="" colors="Button|ButtonHover|Button|Button" textColors="White|White|White|White" rectAlignment="LowerRight" width="138" height="25" deselectedBackgroundColor="Button" selectedBackgroundColor="Primary">
+          <TextMeshPro text="Modify" />
+        </ToggleButton>
+      </ToggleGroup>
+    </Panel>
+    <VerticalScrollView id="transcript-scroll" class="no-image" anchorMin="0 0" anchorMax="1 1" offsetMin="12 180" offsetMax="-12 -122">
+      <TextMeshPro id="transcript-text" class="value" alignment="TopLeft" />
+    </VerticalScrollView>
+    <TextMeshPro id="status-text" class="label" anchorMin="0 0" anchorMax="0 0" pivot="0 0" offsetMin="12 144" offsetMax="312 168" />
+    <Image id="pending-indicator" color="Primary" anchorMin="0 0" anchorMax="0 0" pivot="0 0" offsetMin="326 150" offsetMax="336 160" active="false" />
+    <TextMeshProInputField id="prompt-input" lineType="MultiLineNewline" rectAlignment="LowerCenter" height="74" width="396" offsetXY="0 60">
+      <TMP_Text color="White" />
+    </TextMeshProInputField>
+    <Button id="undo-button" class="icon-button" rectAlignment="LowerLeft" offsetXY="12 12" icon="Ui/Sprites/Design/IconButtonUndo" onClick="OnUndoButtonClicked();" tooltip="Undo last GPT apply" tooltipPosition="Above" />
+    <Button id="preview-button" class="btn" rectAlignment="LowerRight" width="86" offsetXY="-138 12" onClick="OnPreviewButtonClicked();"><TextMeshPro text="Preview" /></Button>
+    <Button id="send-button" class="icon-button" rectAlignment="LowerRight" icon="Ui/Sprites/Design/IconButtonPlay" offsetXY="-64 12" onClick="OnSendButtonClicked();" tooltip="Send" tooltipPosition="Above" />
+    <Button id="cancel-button" class="icon-button" rectAlignment="LowerRight" icon="Ui/Sprites/Common/IconCloseButton" onClick="OnCancelButtonClicked();" tooltip="Cancel request" tooltipPosition="Above" offsetXY="-12 12" />
+  </Panel>
+</XmlLayout>

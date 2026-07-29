@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{FC35F9D4-83C7-41FD-998B-2533259E0E2A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VizzyGPT.Core", "src\VizzyGPT.Core\VizzyGPT.Core.csproj", "{98573C83-DD88-40CD-B738-1A4061BE3332}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{E497223F-8924-42D9-8C55-DBC587E5CF7F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VizzyGPT.Core.Tests", "tests\VizzyGPT.Core.Tests\VizzyGPT.Core.Tests.csproj", "{94C211D4-075C-4BCC-A3F1-B28BEED74924}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{98573C83-DD88-40CD-B738-1A4061BE3332}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{98573C83-DD88-40CD-B738-1A4061BE3332}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{98573C83-DD88-40CD-B738-1A4061BE3332}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{98573C83-DD88-40CD-B738-1A4061BE3332}.Release|Any CPU.Build.0 = Release|Any CPU
+		{94C211D4-075C-4BCC-A3F1-B28BEED74924}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{94C211D4-075C-4BCC-A3F1-B28BEED74924}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{94C211D4-075C-4BCC-A3F1-B28BEED74924}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{94C211D4-075C-4BCC-A3F1-B28BEED74924}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{98573C83-DD88-40CD-B738-1A4061BE3332} = {FC35F9D4-83C7-41FD-998B-2533259E0E2A}
+		{94C211D4-075C-4BCC-A3F1-B28BEED74924} = {E497223F-8924-42D9-8C55-DBC587E5CF7F}
+	EndGlobalSection
+EndGlobal

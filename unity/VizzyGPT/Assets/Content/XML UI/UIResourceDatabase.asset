@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 462600611, guid: a67a49df4508efd41b25d5ea1d54bed1, type: 3}
+  m_Name: UIResourceDatabase
+  m_EditorClassIdentifier: 
+  PathPrefix: VizzyGPT/
+  MonitorContainingFolder: 1
+  folders:
+  - Content/XML UI
+  AutomaticallyRemoveEntries: 0
+  entries:
+  - path: VizzyGPT/VizzyGptPanel
+    resource: {fileID: 4900000, guid: f1348ea3406c6e747858a07a2574e98a, type: 3}
+  - path: VizzyGPT/PreviewDialog
+    resource: {fileID: 4900000, guid: 56c2f77f8adaa1048aa5e8d05f87653a, type: 3}
+  - path: VizzyGPT/SettingsDialog
+    resource: {fileID: 4900000, guid: c430157d929be5a4eb22b5fc340c018b, type: 3}
+  - path: VizzyGPT/VizzyToolbox
+    resource: {fileID: 4900000, guid: 9a14257bcb0e4bdc8b91fc19a43ad53e, type: 3}
+  - path: VizzyGPT/UIResourceDatabase
+    resource: {fileID: 11400000}
