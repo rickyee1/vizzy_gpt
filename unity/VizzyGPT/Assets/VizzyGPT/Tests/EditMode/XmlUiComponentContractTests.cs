@@ -204,6 +204,20 @@ namespace VizzyGPT.Tests.EditMode
             AssertAnchoredRect(settings, "settings-title", "0 1", "0 1", "0 1", "20 -52", "400 -20");
         }
 
+        [Test]
+        public void Settings_clear_history_button_does_not_overlap_form()
+        {
+            var settings = LoadResource("SettingsDialog.xml");
+            var form = (XmlElement)settings.SelectSingleNode("//*[@id='settings-form']")!;
+            var clear = (XmlElement)settings.SelectSingleNode("//*[@id='clear-history-button']")!;
+            var formBottom = ParsePair(form.GetAttribute("offsetMin")).Y;
+            var clearCenterY = ParsePair(clear.GetAttribute("offsetXY")).Y;
+            Assert.That(clear.GetAttribute("height"), Is.EqualTo("30"));
+            var clearHeight = ParseInt(clear.GetAttribute("height"));
+
+            Assert.That(formBottom, Is.GreaterThanOrEqualTo(clearCenterY + clearHeight / 2 + 4));
+        }
+
         private static IEnumerable<TestCaseData> Resources()
         {
             yield return new TestCaseData("VizzyGptPanel.xml", PanelIds);

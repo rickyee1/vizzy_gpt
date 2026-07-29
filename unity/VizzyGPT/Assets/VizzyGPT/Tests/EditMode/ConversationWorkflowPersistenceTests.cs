@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Conversations;
 using VizzyGPT.Core.Patching;
@@ -60,6 +61,70 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(store.Cleared, Is.EqualTo(new[] { "conversation-a" }));
             Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
             Assert.That(renderCount, Is.EqualTo(rendersBeforeClear + 1));
+        }
+
+        [Test]
+        public void Clear_history_rejects_while_request_is_sending_without_mutating_history()
+        {
+            var old = Message("old", ConversationRole.Assistant, "Earlier response.");
+            var store = new FakeConversationStore(new ConversationHistory(1, "conversation-a", new[] { old }));
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var started = new ManualResetEventSlim();
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    started.Set();
+                    return completion.Task;
+                },
+                store);
+            workflow.OpenPanel();
+
+            var pending = workflow.SendPromptAsync("Explain.");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => workflow.ClearConversationAsync().GetAwaiter().GetResult());
+            Assert.That(exception!.Message, Does.Contain("request is in progress"));
+            Assert.That(store.Cleared, Is.Empty);
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Sending));
+
+            completion.SetResult(new AiResponse("Current response.", null, false, Array.Empty<string>()));
+            pending.GetAwaiter().GetResult();
+            Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                Does.Contain("Current response."));
+        }
+
+        [UnityTest]
+        public System.Collections.IEnumerator Clear_history_pins_target_while_concurrent_mode_load_waits()
+        {
+            var general = new ConversationHistory(
+                1,
+                "general-conversation",
+                new[] { Message("general", ConversationRole.Assistant, "General history.") });
+            var modify = new ConversationHistory(
+                1,
+                "modify-conversation",
+                new[] { Message("modify", ConversationRole.Assistant, "Modify history.") });
+            var store = new RacingConversationStore(general, modify);
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) => Task.FromResult(new AiResponse("Unused.", null, false, Array.Empty<string>())),
+                store);
+
+            var clear = workflow.ClearConversationAsync();
+            Assert.That(store.GeneralLoadStarted.Wait(TimeSpan.FromSeconds(1)), Is.True);
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            store.CompleteGeneralLoad();
+
+            while (!clear.IsCompleted)
+            {
+                yield return null;
+            }
+
+            clear.GetAwaiter().GetResult();
+
+            Assert.That(store.Cleared, Is.EqualTo(new[] { "general-conversation" }));
         }
 
         [Test]
@@ -366,6 +431,67 @@ namespace VizzyGPT.Tests.EditMode
                 CancellationToken cancellationToken = default)
             {
                 Linked.Add((conversationId, programHash));
+                return Task.CompletedTask;
+            }
+
+            public Task ClearAsync(
+                string conversationId,
+                CancellationToken cancellationToken = default)
+            {
+                Cleared.Add(conversationId);
+                return Task.CompletedTask;
+            }
+        }
+
+        private sealed class RacingConversationStore : IConversationStore
+        {
+            private readonly ConversationHistory general;
+            private readonly ConversationHistory modify;
+            private readonly TaskCompletionSource<ConversationHistory> generalLoad =
+                new TaskCompletionSource<ConversationHistory>();
+
+            public RacingConversationStore(
+                ConversationHistory general,
+                ConversationHistory modify)
+            {
+                this.general = general;
+                this.modify = modify;
+            }
+
+            public ManualResetEventSlim GeneralLoadStarted { get; } = new ManualResetEventSlim();
+
+            public List<string> Cleared { get; } = new List<string>();
+
+            public void CompleteGeneralLoad()
+            {
+                generalLoad.TrySetResult(general);
+            }
+
+            public Task<ConversationHistory> LoadOrCreateAsync(
+                string? programHash,
+                CancellationToken cancellationToken = default)
+            {
+                if (programHash == null)
+                {
+                    GeneralLoadStarted.Set();
+                    return generalLoad.Task;
+                }
+
+                return Task.FromResult(modify);
+            }
+
+            public Task SaveAsync(
+                ConversationHistory history,
+                CancellationToken cancellationToken = default)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task LinkProgramHashAsync(
+                string conversationId,
+                string programHash,
+                CancellationToken cancellationToken = default)
+            {
                 return Task.CompletedTask;
             }
 

@@ -535,37 +535,33 @@ namespace VizzyGPT.Runtime.Ui
         public async Task LoadConversationAsync()
         {
             ThrowIfDisposed();
-            string? programHash = null;
-            if (Mode == VizzyGptPanelMode.Modify &&
-                TryReadCurrent(out _, out var currentHash, out _))
-            {
-                programHash = currentHash;
-            }
-
-            await EnsureConversationLoadedAsync(programHash, CancellationToken.None);
+            await EnsureConversationLoadedAsync(
+                ResolveConversationProgramHash(),
+                CancellationToken.None);
         }
 
         public async Task ClearConversationAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            if (conversationStore == null)
-            {
-                messages.Clear();
-                RenderState();
-                return;
-            }
-
-            string? programHash = null;
-            if (Mode == VizzyGptPanelMode.Modify &&
-                TryReadCurrent(out _, out var currentHash, out _))
-            {
-                programHash = currentHash;
-            }
-
-            await EnsureConversationLoadedAsync(programHash, cancellationToken);
             await conversationLoadGate.WaitAsync(cancellationToken);
             try
             {
+                if (State == VizzyGptPanelState.Sending)
+                {
+                    throw new InvalidOperationException(
+                        "Conversation history cannot be cleared while a request is in progress.");
+                }
+
+                if (conversationStore == null)
+                {
+                    messages.Clear();
+                    RenderState();
+                    return;
+                }
+
+                await EnsureConversationLoadedWhileLockedAsync(
+                    ResolveConversationProgramHash(),
+                    cancellationToken);
                 if (conversationHistory == null)
                 {
                     throw new InvalidOperationException("The active conversation is unavailable.");
@@ -588,6 +584,17 @@ namespace VizzyGPT.Runtime.Ui
             {
                 conversationLoadGate.Release();
             }
+        }
+
+        private string? ResolveConversationProgramHash()
+        {
+            if (Mode == VizzyGptPanelMode.Modify &&
+                TryReadCurrent(out _, out var currentHash, out _))
+            {
+                return currentHash;
+            }
+
+            return null;
         }
 
         public async Task RestorePendingAsync()
@@ -1184,42 +1191,52 @@ namespace VizzyGPT.Runtime.Ui
             await conversationLoadGate.WaitAsync(cancellationToken);
             try
             {
-                var key = programHash ?? "<general>";
-                requestedHistoryProgramHash = programHash;
-                hasRequestedHistory = true;
-                if (string.Equals(loadedHistoryKey, key, StringComparison.Ordinal))
-                {
-                    return;
-                }
-
-                try
-                {
-                    conversationHistory = await conversationStore.LoadOrCreateAsync(programHash, cancellationToken);
-                    if (disposed)
-                    {
-                        return;
-                    }
-                    var currentTurn = CaptureActiveTurn();
-                    messages.Clear();
-                    messages.AddRange(conversationHistory.Messages);
-                    messages.AddRange(currentTurn);
-                    loadedHistoryKey = key;
-                    RenderState();
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    conversationHistory = null;
-                    loadedHistoryKey = null;
-                    AddPersistenceWarning(exception, "ConversationLoad");
-                }
+                await EnsureConversationLoadedWhileLockedAsync(programHash, cancellationToken);
             }
             finally
             {
                 conversationLoadGate.Release();
+            }
+        }
+
+        private async Task EnsureConversationLoadedWhileLockedAsync(
+            string? programHash,
+            CancellationToken cancellationToken)
+        {
+            var key = programHash ?? "<general>";
+            requestedHistoryProgramHash = programHash;
+            hasRequestedHistory = true;
+            if (string.Equals(loadedHistoryKey, key, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            try
+            {
+                conversationHistory = await conversationStore!.LoadOrCreateAsync(
+                    programHash,
+                    cancellationToken);
+                if (disposed)
+                {
+                    return;
+                }
+
+                var currentTurn = CaptureActiveTurn();
+                messages.Clear();
+                messages.AddRange(conversationHistory.Messages);
+                messages.AddRange(currentTurn);
+                loadedHistoryKey = key;
+                RenderState();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                conversationHistory = null;
+                loadedHistoryKey = null;
+                AddPersistenceWarning(exception, "ConversationLoad");
             }
         }
 

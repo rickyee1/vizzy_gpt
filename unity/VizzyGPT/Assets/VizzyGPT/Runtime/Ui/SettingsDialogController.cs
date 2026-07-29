@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using ModApi.Ui;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Diagnostics;
 using VizzyGPT.Core.Storage;
@@ -225,6 +226,8 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_InputField? timeoutInput;
         private TMP_Text? destinationHostText;
         private TMP_Text? connectionStatusText;
+        private Button? clearHistoryButton;
+        private CancellationTokenSource? clearHistoryCancellation;
         private bool disposed;
 
         public void Configure(SettingsDialogController value, Action onSettingsSaved, Action closeAction)
@@ -248,6 +251,7 @@ namespace VizzyGPT.Runtime.Ui
             timeoutInput = RequireElement<TMP_InputField>(layout, "timeout-input");
             destinationHostText = RequireElement<TMP_Text>(layout, "destination-host-text");
             connectionStatusText = RequireElement<TMP_Text>(layout, "connection-status-text");
+            clearHistoryButton = RequireElement<Button>(layout, "clear-history-button");
             if (baseUrlInput != null)
             {
                 baseUrlInput.onValueChanged.AddListener(OnBaseUrlChanged);
@@ -295,14 +299,44 @@ namespace VizzyGPT.Runtime.Ui
 
         public async void OnClearHistoryButtonClicked()
         {
-            var activeController = RequireController();
-            var result = await activeController.ClearHistoryAsync();
-            if (disposed || !ReferenceEquals(controller, activeController))
+            if (disposed || clearHistoryCancellation != null)
             {
                 return;
             }
 
-            RenderStatus(result.Status);
+            var activeController = RequireController();
+            var cancellation = new CancellationTokenSource();
+            clearHistoryCancellation = cancellation;
+            if (clearHistoryButton != null)
+            {
+                clearHistoryButton.interactable = false;
+            }
+
+            try
+            {
+                var result = await activeController.ClearHistoryAsync(cancellation.Token);
+                if (disposed ||
+                    cancellation.IsCancellationRequested ||
+                    !ReferenceEquals(controller, activeController))
+                {
+                    return;
+                }
+
+                RenderStatus(result.Status);
+            }
+            finally
+            {
+                if (ReferenceEquals(clearHistoryCancellation, cancellation))
+                {
+                    clearHistoryCancellation = null;
+                    if (!disposed && clearHistoryButton != null)
+                    {
+                        clearHistoryButton.interactable = true;
+                    }
+                }
+
+                cancellation.Dispose();
+            }
         }
 
         public void OnCancelButtonClicked()
@@ -405,6 +439,7 @@ namespace VizzyGPT.Runtime.Ui
         private void OnDestroy()
         {
             disposed = true;
+            clearHistoryCancellation?.Cancel();
             controller?.CancelTestConnection();
             if (baseUrlInput != null)
             {
@@ -414,6 +449,7 @@ namespace VizzyGPT.Runtime.Ui
             controller = null;
             settingsSaved = null;
             close = null;
+            clearHistoryButton = null;
         }
     }
 }
