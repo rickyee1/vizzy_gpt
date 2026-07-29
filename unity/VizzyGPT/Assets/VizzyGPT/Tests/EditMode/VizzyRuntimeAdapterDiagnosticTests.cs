@@ -34,6 +34,34 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(issue.Message, Does.Not.Contain("target of an invocation"));
         }
 
+        [Test]
+        public void Serialization_errors_use_unwrapped_sanitized_diagnostics()
+        {
+            var formatter = typeof(VizzyRuntimeAdapter).GetMethod(
+                "FormatDiagnostic",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            var wrapped = new TargetInvocationException(new InvalidOperationException(
+                "Authorization: Basic editor-secret; Body: {\"input\":\"sensitive body\"}"));
+
+            Assert.That(formatter, Is.Not.Null);
+
+            var error = (string)formatter.Invoke(
+                null,
+                new object[]
+                {
+                    "Unable to serialize the flight program: ",
+                    wrapped,
+                    "FlightProgramSerialization"
+                });
+
+            Assert.That(error, Does.StartWith("Unable to serialize the flight program: "));
+            Assert.That(error, Does.Contain("FlightProgramSerialization"));
+            Assert.That(error, Does.Contain("[REDACTED STRUCTURED PAYLOAD]"));
+            Assert.That(error, Does.Not.Contain("editor-secret"));
+            Assert.That(error, Does.Not.Contain("sensitive body"));
+            Assert.That(error, Does.Not.Contain("target of an invocation"));
+        }
+
         private static VizzyRuntimeAdapter CreateAdapter(Func<string, Exception> runtimeValidation)
         {
             var constructor = typeof(VizzyRuntimeAdapter).GetConstructor(

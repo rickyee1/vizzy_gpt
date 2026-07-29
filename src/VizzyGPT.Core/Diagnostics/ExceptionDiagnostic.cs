@@ -1,13 +1,34 @@
 using System;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using VizzyGPT.Core.Security;
 
 namespace VizzyGPT.Core.Diagnostics
 {
     public sealed class ExceptionDiagnostic
     {
-        private static readonly Regex Bearer = new Regex(
-            @"(?i)(authorization\s*:\s*bearer\s+|bearer\s+)[^\s,;]+",
+        private const int MaximumMessageLength = 512;
+        private const string StructuredPayloadPlaceholder = "[REDACTED STRUCTURED PAYLOAD]";
+        private const string TruncatedPlaceholder = "[TRUNCATED]";
+
+        private static readonly Regex AuthorizationValue = new Regex(
+            @"(?i)(authorization\s*:\s*)[^\r\n,;]+",
+            RegexOptions.CultureInvariant);
+
+        private static readonly Regex BareBearer = new Regex(
+            @"(?i)(bearer\s+)[^\s,;]+",
+            RegexOptions.CultureInvariant);
+
+        private static readonly Regex ApiKeyAssignment = new Regex(
+            @"(?i)(api[\s_-]*key\s*[:=]\s*)[^\s,;]+",
+            RegexOptions.CultureInvariant);
+
+        private static readonly Regex JsonPayload = new Regex(
+            @"(?s)[\{\[]\s*(?=[\{\[\""0-9tfn-]).*",
+            RegexOptions.CultureInvariant);
+
+        private static readonly Regex XmlPayload = new Regex(
+            @"(?is)<(?:\?xml\b.*|[A-Za-z_][A-Za-z0-9_.:-]*(?:\s[^>]*)?/?>.*)",
             RegexOptions.CultureInvariant);
 
         private ExceptionDiagnostic(string code, string stage, string displayMessage, string technicalDetails)
@@ -47,8 +68,30 @@ namespace VizzyGPT.Core.Diagnostics
                 root = root.InnerException;
             }
 
-            var safe = Bearer.Replace(root.Message ?? root.GetType().Name, "$1[REDACTED]");
-            return new ExceptionDiagnostic(root.GetType().Name, stage, safe, root.GetType().FullName + ": " + safe);
+            var safe = Sanitize(root.Message ?? root.GetType().Name);
+            var technicalDetails = Bound((root.GetType().FullName ?? root.GetType().Name) + ": " + safe);
+            return new ExceptionDiagnostic(root.GetType().Name, stage, safe, technicalDetails);
+        }
+
+        private static string Sanitize(string message)
+        {
+            var safe = SecretRedactor.Redact(message);
+            safe = AuthorizationValue.Replace(safe, "$1[REDACTED]");
+            safe = BareBearer.Replace(safe, "$1[REDACTED]");
+            safe = ApiKeyAssignment.Replace(safe, "$1[REDACTED]");
+            safe = JsonPayload.Replace(safe, StructuredPayloadPlaceholder);
+            safe = XmlPayload.Replace(safe, StructuredPayloadPlaceholder);
+            return Bound(safe);
+        }
+
+        private static string Bound(string value)
+        {
+            if (value.Length <= MaximumMessageLength)
+            {
+                return value;
+            }
+
+            return value.Substring(0, MaximumMessageLength - TruncatedPlaceholder.Length) + TruncatedPlaceholder;
         }
     }
 }

@@ -62,7 +62,10 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                error = "Unable to read the Vizzy editor program: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to read the Vizzy editor program: ",
+                    exception,
+                    "EditorProgramSerialization");
                 return false;
             }
         }
@@ -83,9 +86,10 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                var diagnostic = ExceptionDiagnostic.From(exception, "EditorProgramSet");
-                error = "Program XML is not accepted by the current runtime: [" + diagnostic.Stage + "] " +
-                    diagnostic.DisplayMessage;
+                error = FormatDiagnostic(
+                    "Program XML is not accepted by the current runtime: ",
+                    exception,
+                    "EditorProgramSet");
                 return false;
             }
 
@@ -122,15 +126,17 @@ namespace VizzyGPT.Runtime.Adapters
                 }
                 catch (Exception rollbackException)
                 {
-                    var diagnostic = ExceptionDiagnostic.From(rollbackException, "EditorRefreshRollback");
-                    error = "Vizzy editor refresh failed and rollback failed: [" + diagnostic.Stage + "] " +
-                        diagnostic.DisplayMessage;
+                    error = FormatDiagnostic(
+                        "Vizzy editor refresh failed and rollback failed: ",
+                        rollbackException,
+                        "EditorRefreshRollback");
                     return false;
                 }
 
-                var refreshDiagnostic = ExceptionDiagnostic.From(exception, "EditorRefresh");
-                error = "Vizzy editor refresh failed; the previous program was restored: [" +
-                    refreshDiagnostic.Stage + "] " + refreshDiagnostic.DisplayMessage;
+                error = FormatDiagnostic(
+                    "Vizzy editor refresh failed; the previous program was restored: ",
+                    exception,
+                    "EditorRefresh");
                 return false;
             }
         }
@@ -150,7 +156,10 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                error = "Unable to serialize the flight program: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to serialize the flight program: ",
+                    exception,
+                    "FlightProgramSerialization");
                 return false;
             }
         }
@@ -187,6 +196,12 @@ namespace VizzyGPT.Runtime.Adapters
             {
                 return exception;
             }
+        }
+
+        private static string FormatDiagnostic(string friendlyPrefix, Exception exception, string stage)
+        {
+            var diagnostic = ExceptionDiagnostic.From(exception, stage);
+            return friendlyPrefix + "[" + diagnostic.Stage + "] " + diagnostic.DisplayMessage;
         }
 
         private RuntimeContract GetEditorContract()
