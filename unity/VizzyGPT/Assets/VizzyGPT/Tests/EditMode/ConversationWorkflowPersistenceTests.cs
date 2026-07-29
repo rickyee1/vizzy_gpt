@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,6 +87,106 @@ namespace VizzyGPT.Tests.EditMode
             completion.SetResult(new AiResponse("Done.", null, false, Array.Empty<string>()));
             sending.GetAwaiter().GetResult();
             Assert.That(store.Saved, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void Close_during_request_persists_cancelled_terminal_without_reopening()
+        {
+            Task.Run(async () =>
+            {
+                var root = Path.Combine(
+                    Path.GetTempPath(),
+                    "VizzyGPT-CloseConversation-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var store = new FileConversationStore(root);
+                    var completion = new TaskCompletionSource<AiResponse>();
+                    using var started = new ManualResetEventSlim();
+                    using var workflow = CreateWorkflow(
+                        new FakeAdapter(InitialXml),
+                        (_, __) =>
+                        {
+                            started.Set();
+                            return completion.Task;
+                        },
+                        store);
+
+                    await workflow.LoadConversationAsync();
+                    workflow.OpenPanel();
+                    var sending = workflow.SendPromptAsync("Explain.");
+                    Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+
+                    workflow.ClosePanel();
+                    completion.SetResult(new AiResponse(
+                        "Ignored.",
+                        null,
+                        false,
+                        Array.Empty<string>()));
+                    await sending;
+
+                    var loaded = await store.LoadOrCreateAsync(null);
+                    for (var attempt = 0;
+                         attempt < 100 &&
+                         !loaded.Messages.Any(message => message.Kind == ConversationMessageKind.Cancelled);
+                         attempt++)
+                    {
+                        await Task.Delay(10);
+                        loaded = await new FileConversationStore(root).LoadOrCreateAsync(null);
+                    }
+
+                    Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Closed));
+                    Assert.That(loaded.Messages.Any(
+                        message => message.Kind == ConversationMessageKind.Cancelled), Is.True);
+                    Assert.That(loaded.Messages.Any(
+                        message => message.Kind == ConversationMessageKind.Progress), Is.False);
+
+                    workflow.OpenPanel();
+                    Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+                    Assert.That(workflow.CurrentRenderState.Entries.Any(
+                        entry => entry.CurrentStage != null), Is.False);
+                }
+                finally
+                {
+                    if (Directory.Exists(root))
+                    {
+                        Directory.Delete(root, true);
+                    }
+                }
+            }).GetAwaiter().GetResult();
+        }
+
+        [Test]
+        public void Close_persistence_failure_stays_closed_and_surfaces_warning()
+        {
+            var store = new FakeConversationStore(
+                new ConversationHistory(1, "conversation-a", Array.Empty<ConversationMessage>()))
+            {
+                ThrowOnSave = true
+            };
+            var completion = new TaskCompletionSource<AiResponse>();
+            using var started = new ManualResetEventSlim();
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    started.Set();
+                    return completion.Task;
+                },
+                store);
+
+            workflow.OpenPanel();
+            var sending = workflow.SendPromptAsync("Explain.");
+            Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
+
+            workflow.ClosePanel();
+            completion.SetResult(new AiResponse("Ignored.", null, false, Array.Empty<string>()));
+            sending.GetAwaiter().GetResult();
+
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Closed));
+            Assert.That(workflow.CurrentRenderState.Entries.Last().Error!.Code,
+                Is.EqualTo("PersistenceWarning"));
+            Assert.That(workflow.CurrentRenderState.Entries.Any(
+                entry => entry.CurrentStage != null), Is.False);
         }
 
         [Test]

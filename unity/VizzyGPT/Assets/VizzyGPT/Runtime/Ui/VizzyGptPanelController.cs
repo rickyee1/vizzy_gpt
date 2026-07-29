@@ -313,13 +313,17 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             CancelRequest();
-            FinalizeActiveRequestAsCancelled();
+            var finalizedActiveRequest = FinalizeActiveRequestAsCancelled();
             requestGeneration++;
             if (restoredPendingFingerprint == null)
             {
                 session = null;
             }
             Transition(VizzyGptPanelState.Closed, string.Empty);
+            if (finalizedActiveRequest)
+            {
+                _ = PersistClosedConversationAsync();
+            }
         }
 
         public void SetMode(VizzyGptPanelMode mode)
@@ -1076,12 +1080,15 @@ namespace VizzyGPT.Runtime.Ui
                 requestStartedUtc));
         }
 
-        private void FinalizeActiveRequestAsCancelled()
+        private bool FinalizeActiveRequestAsCancelled()
         {
-            if (activeEntryId != null)
+            if (activeEntryId == null)
             {
-                CompleteCancelledEntry();
+                return false;
             }
+
+            CompleteCancelledEntry();
+            return true;
         }
 
         private void CompleteActiveStage()
@@ -1220,6 +1227,18 @@ namespace VizzyGPT.Runtime.Ui
             }
         }
 
+        private async Task PersistClosedConversationAsync()
+        {
+            try
+            {
+                await PersistConversationAsync();
+            }
+            catch
+            {
+                // Close and Dispose cannot await persistence or propagate lifecycle callback failures.
+            }
+        }
+
         private async Task LinkConversationHashAsync(string programHash)
         {
             if (conversationStore == null || conversationHistory == null)
@@ -1263,7 +1282,10 @@ namespace VizzyGPT.Runtime.Ui
                 null,
                 warning,
                 utcNow()));
-            RenderState();
+            if (!disposed)
+            {
+                RenderState();
+            }
         }
 
         private static ConversationMode ToConversationMode(VizzyGptPanelMode mode)

@@ -200,6 +200,7 @@ namespace VizzyGPT.Tests.EditMode
                     Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
                         Does.Not.Contain("General history."));
                     Assert.That(await workflow.ApplySessionAsync(), Is.True);
+                    Assert.That(adapter.SetCalls, Is.EqualTo(1));
 
                     var resultHash = Hash(adapter.Xml);
                     var linked = await new FileConversationStore(root).LoadOrCreateAsync(resultHash);
