@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using VizzyGPT.Core.Conversations;
@@ -72,6 +73,74 @@ namespace VizzyGPT.Core.Tests.Conversations
                 .LoadOrCreateAsync("program-after");
 
             Assert.That(afterApply.ConversationId, Is.EqualTo(beforeApply.ConversationId));
+        }
+
+        [Test]
+        public async Task Separate_instances_concurrently_create_one_alias_for_the_same_program_hash()
+        {
+            using var temporary = new TemporaryDirectory();
+            var start = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var loads = Enumerable.Range(0, 32)
+                .Select(
+                    async _ =>
+                    {
+                        var store = new FileConversationStore(temporary.Path);
+                        await start.Task;
+                        return await store.LoadOrCreateAsync("program-shared");
+                    })
+                .ToArray();
+
+            start.SetResult(true);
+            var histories = await Task.WhenAll(loads);
+
+            Assert.That(
+                histories.Select(history => history.ConversationId).Distinct().Count(),
+                Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task Separate_instances_concurrently_preserve_every_program_alias()
+        {
+            using var temporary = new TemporaryDirectory();
+            var start = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var loads = Enumerable.Range(0, 32)
+                .Select(
+                    async index =>
+                    {
+                        var store = new FileConversationStore(temporary.Path);
+                        await start.Task;
+                        return (
+                            ProgramHash: "program-" + index,
+                            History: await store.LoadOrCreateAsync("program-" + index));
+                    })
+                .ToArray();
+
+            start.SetResult(true);
+            var created = await Task.WhenAll(loads);
+
+            foreach (var item in created)
+            {
+                var reloaded = await new FileConversationStore(temporary.Path)
+                    .LoadOrCreateAsync(item.ProgramHash);
+                Assert.That(reloaded.ConversationId, Is.EqualTo(item.History.ConversationId));
+            }
+        }
+
+        [Test]
+        public void General_conversation_cannot_be_linked_to_a_program_hash()
+        {
+            using var temporary = new TemporaryDirectory();
+            var store = new FileConversationStore(temporary.Path);
+
+            var exception = Assert.ThrowsAsync<ArgumentException>(
+                async () => await store.LinkProgramHashAsync("general", "program-hash"));
+
+            Assert.That(exception!.ParamName, Is.EqualTo("conversationId"));
+            Assert.That(
+                File.Exists(Path.Combine(temporary.Path, "Conversations", "index.json")),
+                Is.False);
         }
 
         [Test]
@@ -162,35 +231,54 @@ namespace VizzyGPT.Core.Tests.Conversations
         }
 
         [Test]
-        public async Task Conversation_files_are_atomic_utf8_without_bom_and_exclude_sensitive_request_data()
+        public async Task Sensitive_values_in_message_fields_are_redacted_without_altering_ordinary_chat()
         {
             using var temporary = new TemporaryDirectory();
             var store = new FileConversationStore(temporary.Path);
             var history = await store.LoadOrCreateAsync("program-secret");
-            var programXml = "<Program name=\"secret\" />";
-            var rawPatch = "{\"operations\":[{\"op\":\"remove\"}]}";
-            var authorization = "Bearer secret-token";
+            const string programXml = "<Program name=\"secret\"><Instructions /></Program>";
+            const string rawPatch = "{\"operations\":[{\"op\":\"remove\"}]}";
+            const string authorization = "Authorization: Bearer secret-token";
+            const string apiKey = "sk-sensitive123456";
+            const string ordinary =
+                "Program diagrams, operations planning, and bearer authentication concepts remain useful.";
 
             await store.SaveAsync(
                 new ConversationHistory(
                     1,
                     history.ConversationId,
-                    new[] { CreateMessage(text: "Safe visible response \u706b\u7bad") }));
+                    new[]
+                    {
+                        CreateMessage(
+                            id: "sensitive",
+                            kind: ConversationMessageKind.Error,
+                            text: programXml,
+                            reasoningSummary: rawPatch,
+                            error: new ConversationError(
+                                "request_failed",
+                                "transport",
+                                "Request failed",
+                                authorization + " " + apiKey,
+                                null)),
+                        CreateMessage(id: "ordinary", text: ordinary)
+                    }));
 
             var historyPath = Path.Combine(
                 temporary.Path,
                 "Conversations",
                 history.ConversationId + ".json");
             var persisted = File.ReadAllText(historyPath);
-            Assert.That(persisted, Does.Not.Contain(programXml.Substring(0, 8)));
+            var loaded = await store.LoadOrCreateAsync("program-secret");
+            Assert.That(persisted, Does.Not.Contain("<Program"));
             Assert.That(persisted, Does.Not.Contain("\"operations\""));
-            Assert.That(persisted, Does.Not.Contain(authorization.Substring(0, 6)));
+            Assert.That(persisted, Does.Not.Contain("Bearer"));
+            Assert.That(persisted, Does.Not.Contain(apiKey));
+            Assert.That(loaded.Messages.Single(message => message.Id == "ordinary").Text, Is.EqualTo(ordinary));
+            Assert.That(loaded.Messages.Single(message => message.Id == "sensitive").Text, Does.Contain("redacted"));
             Assert.That(File.ReadAllBytes(historyPath).Take(3), Is.Not.EqualTo(new byte[] { 0xef, 0xbb, 0xbf }));
             Assert.That(
                 Directory.GetFiles(temporary.Path, "*.tmp", SearchOption.AllDirectories),
                 Is.Empty);
-
-            GC.KeepAlive(rawPatch);
         }
 
         [Test]
@@ -237,6 +325,82 @@ namespace VizzyGPT.Core.Tests.Conversations
             Assert.That(File.ReadAllText(historyPath), Is.EqualTo(malformed));
             Assert.That(warnings, Has.Count.EqualTo(1));
             Assert.That(warnings[0], Does.Not.Contain("Bearer"));
+        }
+
+        [Test]
+        public async Task Throwing_warning_sink_does_not_break_corruption_recovery()
+        {
+            using var temporary = new TemporaryDirectory();
+            var conversations = Path.Combine(temporary.Path, "Conversations");
+            Directory.CreateDirectory(conversations);
+            File.WriteAllText(Path.Combine(conversations, "index.json"), "{malformed");
+            var store = new FileConversationStore(
+                temporary.Path,
+                _ => throw new InvalidOperationException("sink failed"));
+
+            var recovered = await store.LoadOrCreateAsync("program-warning-sink");
+
+            Assert.That(recovered.ConversationId, Is.Not.Empty);
+            Assert.That(recovered.Messages, Is.Empty);
+        }
+
+        [Test]
+        public async Task Cancelled_replacement_preserves_the_previous_history()
+        {
+            using var temporary = new TemporaryDirectory();
+            var store = new FileConversationStore(temporary.Path);
+            var history = await store.LoadOrCreateAsync("program-cancelled-save");
+            await store.SaveAsync(
+                new ConversationHistory(
+                    1,
+                    history.ConversationId,
+                    new[] { CreateMessage(text: "previous") }));
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            Assert.ThrowsAsync<OperationCanceledException>(
+                async () => await store.SaveAsync(
+                    new ConversationHistory(
+                        1,
+                        history.ConversationId,
+                        new[] { CreateMessage(text: "replacement") }),
+                    cancellation.Token));
+
+            var loaded = await store.LoadOrCreateAsync("program-cancelled-save");
+            Assert.That(loaded.Messages.Single().Text, Is.EqualTo("previous"));
+        }
+
+        [Test]
+        public async Task Failed_replacement_preserves_previous_history_and_removes_temporary_file()
+        {
+            using var temporary = new TemporaryDirectory();
+            var store = new FileConversationStore(temporary.Path);
+            var history = await store.LoadOrCreateAsync("program-failed-save");
+            await store.SaveAsync(
+                new ConversationHistory(
+                    1,
+                    history.ConversationId,
+                    new[] { CreateMessage(text: "previous") }));
+            var historyPath = Path.Combine(
+                temporary.Path,
+                "Conversations",
+                history.ConversationId + ".json");
+
+            using (File.Open(historyPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Assert.ThrowsAsync<IOException>(
+                    async () => await store.SaveAsync(
+                        new ConversationHistory(
+                            1,
+                            history.ConversationId,
+                            new[] { CreateMessage(text: "replacement") })));
+            }
+
+            var loaded = await store.LoadOrCreateAsync("program-failed-save");
+            Assert.That(loaded.Messages.Single().Text, Is.EqualTo("previous"));
+            Assert.That(
+                Directory.GetFiles(temporary.Path, "*.tmp", SearchOption.AllDirectories),
+                Is.Empty);
         }
 
         private static ConversationMessage CreateMessage(

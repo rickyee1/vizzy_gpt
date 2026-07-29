@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 
 namespace VizzyGPT.Core.Conversations
@@ -27,10 +31,25 @@ namespace VizzyGPT.Core.Conversations
             MissingMemberHandling = MissingMemberHandling.Error
         };
 
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> RootGates =
+            new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly Regex AuthorizationHeaderPattern = new Regex(
+            @"\bAuthorization\s*:\s*Bearer\s+\S+",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        private static readonly Regex BearerCredentialPattern = new Regex(
+            @"\bBearer\s+(?<credential>\S+)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        private static readonly Regex ApiKeyPattern = new Regex(
+            @"\bsk-[A-Za-z0-9_-]{8,}\b",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
         private readonly string rootDirectory;
         private readonly string rootPrefix;
         private readonly Action<string> warningSink;
-        private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim gate;
 
         public FileConversationStore(string rootDirectory, Action<string>? warningSink = null)
         {
@@ -41,12 +60,13 @@ namespace VizzyGPT.Core.Conversations
                     nameof(rootDirectory));
             }
 
-            this.rootDirectory = Path.GetFullPath(rootDirectory);
+            this.rootDirectory = new DirectoryInfo(Path.GetFullPath(rootDirectory)).FullName;
             rootPrefix = this.rootDirectory.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ||
                 this.rootDirectory.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal)
                 ? this.rootDirectory
                 : this.rootDirectory + Path.DirectorySeparatorChar;
             this.warningSink = warningSink ?? (_ => { });
+            gate = RootGates.GetOrAdd(this.rootDirectory, _ => new SemaphoreSlim(1, 1));
         }
 
         public async Task<ConversationHistory> LoadOrCreateAsync(
@@ -100,7 +120,10 @@ namespace VizzyGPT.Core.Conversations
             var bounded = new ConversationHistory(
                 CurrentSchemaVersion,
                 history.ConversationId,
-                history.Messages.Skip(Math.Max(0, history.Messages.Count - MessageRetentionCount)).ToArray());
+                history.Messages
+                    .Skip(Math.Max(0, history.Messages.Count - MessageRetentionCount))
+                    .Select(SanitizeMessageForPersistence)
+                    .ToArray());
             var json = JsonConvert.SerializeObject(bounded, Formatting.None, JsonSettings);
 
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -120,7 +143,7 @@ namespace VizzyGPT.Core.Conversations
             string programHash,
             CancellationToken cancellationToken = default)
         {
-            ValidateConversationId(conversationId);
+            ValidateLinkableConversationId(conversationId);
             ValidateProgramHash(programHash);
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -326,6 +349,111 @@ namespace VizzyGPT.Core.Conversations
                 Array.Empty<ConversationMessage>());
         }
 
+        private static ConversationMessage SanitizeMessageForPersistence(ConversationMessage message)
+        {
+            return new ConversationMessage(
+                SanitizePersistedText(message.Id),
+                message.Role,
+                message.Kind,
+                message.Mode,
+                SanitizePersistedText(message.Text),
+                message.ReasoningSummary == null
+                    ? null
+                    : SanitizePersistedText(message.ReasoningSummary),
+                message.Stages
+                    .Select(
+                        stage => new ConversationStageTiming(
+                            SanitizePersistedText(stage.Stage),
+                            stage.ElapsedSeconds))
+                    .ToArray(),
+                message.ElapsedSeconds,
+                message.Error == null ? null : SanitizeErrorForPersistence(message.Error),
+                message.CreatedUtc);
+        }
+
+        private static ConversationError SanitizeErrorForPersistence(ConversationError error)
+        {
+            return new ConversationError(
+                SanitizePersistedText(error.Code),
+                SanitizePersistedText(error.Stage),
+                SanitizePersistedText(error.Summary),
+                SanitizePersistedText(error.TechnicalDetails),
+                error.Path == null ? null : SanitizePersistedText(error.Path));
+        }
+
+        private static string SanitizePersistedText(string value)
+        {
+            if (IsCompleteProgramXml(value))
+            {
+                return "[redacted program XML]";
+            }
+
+            if (IsPatchOperationsPayload(value))
+            {
+                return "[redacted patch payload]";
+            }
+
+            var sanitized = AuthorizationHeaderPattern.Replace(value, "[redacted authorization]");
+            sanitized = BearerCredentialPattern.Replace(
+                sanitized,
+                match => IsCredentialShaped(match.Groups["credential"].Value)
+                    ? "[redacted authorization]"
+                    : match.Value);
+            return ApiKeyPattern.Replace(sanitized, "[redacted API key]");
+        }
+
+        private static bool IsCompleteProgramXml(string value)
+        {
+            try
+            {
+                var document = XDocument.Parse(value, LoadOptions.None);
+                return string.Equals(
+                    document.Root?.Name.LocalName,
+                    "Program",
+                    StringComparison.Ordinal);
+            }
+            catch (Exception exception) when (
+                exception is System.Xml.XmlException ||
+                exception is ArgumentException)
+            {
+                return false;
+            }
+        }
+
+        private static bool IsPatchOperationsPayload(string value)
+        {
+            try
+            {
+                return ContainsOperationsProperty(JToken.Parse(value));
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private static bool ContainsOperationsProperty(JToken token)
+        {
+            if (token is JObject jsonObject &&
+                jsonObject.Properties().Any(
+                    property => string.Equals(
+                        property.Name,
+                        "operations",
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            return token.Children().Any(ContainsOperationsProperty);
+        }
+
+        private static bool IsCredentialShaped(string value)
+        {
+            return value.Length >= 16 ||
+                value.Any(char.IsDigit) ||
+                value.IndexOfAny(new[] { '-', '_', '.', '=', '+', '/' }) >= 0;
+        }
+
         private static bool IsRecoverableReadFailure(Exception exception)
         {
             return exception is IOException ||
@@ -358,6 +486,16 @@ namespace VizzyGPT.Core.Conversations
             }
         }
 
+        private static void ValidateLinkableConversationId(string conversationId)
+        {
+            if (!IsValidConversationId(conversationId, allowGeneral: false))
+            {
+                throw new ArgumentException(
+                    "Only program conversation IDs can be linked to program hashes.",
+                    nameof(conversationId));
+            }
+        }
+
         private static bool IsValidConversationId(string? conversationId, bool allowGeneral)
         {
             if (allowGeneral &&
@@ -372,12 +510,23 @@ namespace VizzyGPT.Core.Conversations
 
         private void WarnIndex()
         {
-            warningSink("Conversation index could not be read and was ignored.");
+            TryWarn("Conversation index could not be read and was ignored.");
         }
 
         private void WarnHistory()
         {
-            warningSink("Conversation history could not be read and was ignored.");
+            TryWarn("Conversation history could not be read and was ignored.");
+        }
+
+        private void TryWarn(string warning)
+        {
+            try
+            {
+                warningSink(warning);
+            }
+            catch (Exception)
+            {
+            }
         }
 
         private static void TryDelete(string path)
