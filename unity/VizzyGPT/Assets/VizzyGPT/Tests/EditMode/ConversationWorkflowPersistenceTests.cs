@@ -42,6 +42,27 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Clear_history_removes_only_the_loaded_conversation_and_renders_empty()
+        {
+            var old = Message("old", ConversationRole.Assistant, "Earlier response.");
+            var store = new FakeConversationStore(new ConversationHistory(1, "conversation-a", new[] { old }));
+            var renderCount = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) => Task.FromResult(new AiResponse("Unused.", null, false, Array.Empty<string>())),
+                store,
+                _ => renderCount++);
+            workflow.LoadConversationAsync().GetAwaiter().GetResult();
+            var rendersBeforeClear = renderCount;
+
+            workflow.ClearConversationAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.That(store.Cleared, Is.EqualTo(new[] { "conversation-a" }));
+            Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
+            Assert.That(renderCount, Is.EqualTo(rendersBeforeClear + 1));
+        }
+
+        [Test]
         public void Terminal_response_restores_and_saves_the_active_history()
         {
             var old = Message("old", ConversationRole.Assistant, "Earlier response.");
@@ -251,7 +272,8 @@ namespace VizzyGPT.Tests.EditMode
         private static VizzyGptPanelWorkflow CreateWorkflow(
             FakeAdapter adapter,
             Func<AiRequest, CancellationToken, Task<AiResponse>> send,
-            IConversationStore store)
+            IConversationStore store,
+            Action<VizzyGptPanelRenderState>? render = null)
         {
             return new VizzyGptPanelWorkflow(
                 adapter,
@@ -268,7 +290,7 @@ namespace VizzyGPT.Tests.EditMode
                 () => VizzyNodeCatalog.FromToolboxXml(
                     "<VizzyToolbox><Instructions><Log /></Instructions><Expressions /></VizzyToolbox>"),
                 () => Now,
-                _ => { },
+                render ?? (_ => { }),
                 conversationStore: store);
         }
 
@@ -316,6 +338,7 @@ namespace VizzyGPT.Tests.EditMode
             public List<ConversationHistory> Saved { get; } = new List<ConversationHistory>();
             public List<(string ConversationId, string ProgramHash)> Linked { get; } =
                 new List<(string ConversationId, string ProgramHash)>();
+            public List<string> Cleared { get; } = new List<string>();
 
             public Task<ConversationHistory> LoadOrCreateAsync(
                 string? programHash,
@@ -350,6 +373,7 @@ namespace VizzyGPT.Tests.EditMode
                 string conversationId,
                 CancellationToken cancellationToken = default)
             {
+                Cleared.Add(conversationId);
                 return Task.CompletedTask;
             }
         }

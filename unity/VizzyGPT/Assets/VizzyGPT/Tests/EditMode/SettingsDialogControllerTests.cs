@@ -4,6 +4,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using UnityEngine;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
 using VizzyGPT.Core.Storage;
@@ -21,7 +22,8 @@ namespace VizzyGPT.Tests.EditMode
                 store,
                 value => "protected:" + value,
                 value => value.Substring("protected:".Length),
-                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())));
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft(
                 "https://api.example.test/v1",
                 ApiMode.Auto,
@@ -51,7 +53,8 @@ namespace VizzyGPT.Tests.EditMode
                 {
                     observed = request;
                     return Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>()));
-                });
+                },
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft(
                 "http://127.0.0.1:8787",
                 ApiMode.ChatCompletions,
@@ -81,7 +84,8 @@ namespace VizzyGPT.Tests.EditMode
                 {
                     observed = cancellationToken;
                     return completion.Task;
-                });
+                },
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft("https://api.example.test", ApiMode.Auto, "test", "key", 10);
 
             var pending = controller.TestConnectionAsync(draft);
@@ -92,6 +96,74 @@ namespace VizzyGPT.Tests.EditMode
 
             Assert.That(result.Success, Is.False);
             Assert.That(result.Status, Is.EqualTo("Connection test cancelled."));
+        }
+
+        [Test]
+        public void Clear_history_calls_callback_once_without_persisting_settings()
+        {
+            var store = new FakeStore();
+            var clearCalls = 0;
+            var controller = new SettingsDialogController(
+                store,
+                value => value,
+                value => value,
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ =>
+                {
+                    clearCalls++;
+                    return Task.CompletedTask;
+                });
+
+            var result = controller.ClearHistoryAsync().GetAwaiter().GetResult();
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(result.Status, Is.EqualTo("Current conversation cleared."));
+            Assert.That(clearCalls, Is.EqualTo(1));
+            Assert.That(store.SaveSettingsCalls, Is.Zero);
+            Assert.That(store.SaveProtectedApiKeyCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Clear_history_failure_is_nonfatal_and_sanitized()
+        {
+            var controller = new SettingsDialogController(
+                new FakeStore(),
+                value => value,
+                value => value,
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ => throw new InvalidOperationException("Authorization: Bearer clear-secret"));
+
+            var result = controller.ClearHistoryAsync().GetAwaiter().GetResult();
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.Status, Does.Contain("[REDACTED]"));
+            Assert.That(result.Status, Does.Not.Contain("clear-secret"));
+        }
+
+        [Test]
+        public void Clear_history_button_does_not_close_dialog()
+        {
+            var root = new GameObject("settings-clear-history-test");
+            try
+            {
+                var view = root.AddComponent<SettingsDialogViewController>();
+                var controller = new SettingsDialogController(
+                    new FakeStore(),
+                    value => value,
+                    value => value,
+                    (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                    _ => Task.CompletedTask);
+                var closeCalls = 0;
+                view.Configure(controller, () => { }, () => closeCalls++);
+
+                view.OnClearHistoryButtonClicked();
+
+                Assert.That(closeCalls, Is.Zero);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
         }
 
         private sealed class FakeStore : IDataStore

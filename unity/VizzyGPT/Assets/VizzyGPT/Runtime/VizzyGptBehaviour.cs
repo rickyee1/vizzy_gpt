@@ -362,7 +362,8 @@ namespace VizzyGPT.Runtime
                 RequireStore(),
                 DpapiSecretProtector.Protect,
                 DpapiSecretProtector.Unprotect,
-                (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken));
+                (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken),
+                cancellationToken => RequirePanelWorkflow().ClearConversationAsync(cancellationToken));
         }
 
         private async void LoadSavedSettingsAsync()

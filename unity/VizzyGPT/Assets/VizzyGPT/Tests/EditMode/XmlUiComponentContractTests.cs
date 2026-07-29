@@ -30,7 +30,7 @@ namespace VizzyGPT.Tests.EditMode
         {
             "settings-dialog", "base-url-input", "api-mode-input", "model-input", "api-key-input",
             "timeout-input", "destination-host-text", "connection-status-text", "test-button",
-            "save-button", "cancel-button"
+            "clear-history-button", "save-button", "cancel-button"
         };
 
         [TestCaseSource(nameof(Resources))]
@@ -53,6 +53,16 @@ namespace VizzyGPT.Tests.EditMode
             if (resourceName == "VizzyGptPanel.xml")
             {
                 Assert.That(document.SelectSingleNode("//ui:TextMeshProInputField[@id='composer-input']", namespaceManager), Is.Not.Null);
+            }
+
+            if (resourceName == "SettingsDialog.xml")
+            {
+                var clearHistory = document.SelectSingleNode(
+                    "//ui:Button[@id='clear-history-button']",
+                    namespaceManager) as XmlElement;
+                Assert.That(clearHistory, Is.Not.Null);
+                Assert.That(clearHistory!.GetAttribute("onClick"),
+                    Is.EqualTo("OnClearHistoryButtonClicked();"));
             }
         }
 

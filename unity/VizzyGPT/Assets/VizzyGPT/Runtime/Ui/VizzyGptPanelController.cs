@@ -545,6 +545,51 @@ namespace VizzyGPT.Runtime.Ui
             await EnsureConversationLoadedAsync(programHash, CancellationToken.None);
         }
 
+        public async Task ClearConversationAsync(CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            if (conversationStore == null)
+            {
+                messages.Clear();
+                RenderState();
+                return;
+            }
+
+            string? programHash = null;
+            if (Mode == VizzyGptPanelMode.Modify &&
+                TryReadCurrent(out _, out var currentHash, out _))
+            {
+                programHash = currentHash;
+            }
+
+            await EnsureConversationLoadedAsync(programHash, cancellationToken);
+            await conversationLoadGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (conversationHistory == null)
+                {
+                    throw new InvalidOperationException("The active conversation is unavailable.");
+                }
+
+                await conversationStore.ClearAsync(
+                    conversationHistory.ConversationId,
+                    cancellationToken);
+                conversationHistory = new ConversationHistory(
+                    conversationHistory.SchemaVersion,
+                    conversationHistory.ConversationId,
+                    Array.Empty<ConversationMessage>());
+                messages.Clear();
+                activeEntryId = null;
+                activeStages.Clear();
+                activeStage = null;
+                RenderState();
+            }
+            finally
+            {
+                conversationLoadGate.Release();
+            }
+        }
+
         public async Task RestorePendingAsync()
         {
             ThrowIfDisposed();
