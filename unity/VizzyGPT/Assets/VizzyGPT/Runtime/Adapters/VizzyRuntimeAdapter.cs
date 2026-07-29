@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using ModApi;
 using ModApi.Craft.Program;
 using UnityEngine;
+using VizzyGPT.Core.Diagnostics;
 using VizzyGPT.Core.Validation;
 
 namespace VizzyGPT.Runtime.Adapters
@@ -16,8 +17,56 @@ namespace VizzyGPT.Runtime.Adapters
 
         private readonly ProgramSerializer serializer = new ProgramSerializer();
         private readonly RuntimeContractProbe probe = new RuntimeContractProbe(ResolvePrivateRefreshContract);
+        private readonly Func<string, Exception?> runtimeValidation;
+        private readonly Func<FlightProgram?> publicFlightProgramResolver;
+        private readonly Func<FlightProgram?> fallbackFlightProgramResolver;
+        private readonly Func<FlightProgram, string> serializeFlightProgram;
         private RuntimeContract editorContract;
         private RuntimeCompatibilityResult editorCompatibility;
+
+        public VizzyRuntimeAdapter()
+        {
+            runtimeValidation = ValidateRuntimeProgram;
+            publicFlightProgramResolver = ResolvePublicFlightProgram;
+            fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
+            serializeFlightProgram = Serialize;
+        }
+
+        internal VizzyRuntimeAdapter(Func<string, Exception?> runtimeValidation)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            publicFlightProgramResolver = ResolvePublicFlightProgram;
+            fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
+            serializeFlightProgram = Serialize;
+        }
+
+        internal VizzyRuntimeAdapter(
+            Func<string, Exception?> runtimeValidation,
+            Func<FlightProgram?> publicFlightProgramResolver,
+            Func<FlightProgram?> fallbackFlightProgramResolver)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            this.publicFlightProgramResolver = publicFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(publicFlightProgramResolver));
+            this.fallbackFlightProgramResolver = fallbackFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(fallbackFlightProgramResolver));
+            serializeFlightProgram = Serialize;
+        }
+
+        internal VizzyRuntimeAdapter(
+            Func<string, Exception?> runtimeValidation,
+            Func<FlightProgram?> publicFlightProgramResolver,
+            Func<FlightProgram?> fallbackFlightProgramResolver,
+            Func<FlightProgram, string> serializeFlightProgram)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            this.publicFlightProgramResolver = publicFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(publicFlightProgramResolver));
+            this.fallbackFlightProgramResolver = fallbackFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(fallbackFlightProgramResolver));
+            this.serializeFlightProgram = serializeFlightProgram ??
+                throw new ArgumentNullException(nameof(serializeFlightProgram));
+        }
 
         public bool IsEditorAvailable => GetEditorContract() != null;
 
@@ -45,12 +94,15 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                xml = Serialize(ReadFlightProgram(contract.Instance, contract.FlightProgramMember));
+                xml = serializeFlightProgram(ReadFlightProgram(contract.Instance, contract.FlightProgramMember));
                 return true;
             }
             catch (Exception exception)
             {
-                error = "Unable to read the Vizzy editor program: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to read the Vizzy editor program: ",
+                    exception,
+                    "EditorProgramSerialization");
                 return false;
             }
         }
@@ -71,7 +123,10 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                error = "Program XML is not accepted by the current runtime: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Program XML is not accepted by the current runtime: ",
+                    exception,
+                    "EditorProgramSet");
                 return false;
             }
 
@@ -108,11 +163,17 @@ namespace VizzyGPT.Runtime.Adapters
                 }
                 catch (Exception rollbackException)
                 {
-                    error = "Vizzy editor refresh failed and rollback failed: " + rollbackException.Message;
+                    error = FormatDiagnostic(
+                        "Vizzy editor refresh failed and rollback failed: ",
+                        rollbackException,
+                        "EditorRefreshRollback");
                     return false;
                 }
 
-                error = "Vizzy editor refresh failed; the previous program was restored: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Vizzy editor refresh failed; the previous program was restored: ",
+                    exception,
+                    "EditorRefresh");
                 return false;
             }
         }
@@ -127,12 +188,15 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                xml = Serialize(flightProgram);
+                xml = serializeFlightProgram(flightProgram);
                 return true;
             }
             catch (Exception exception)
             {
-                error = "Unable to serialize the flight program: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to serialize the flight program: ",
+                    exception,
+                    "FlightProgramSerialization");
                 return false;
             }
         }
@@ -144,6 +208,22 @@ namespace VizzyGPT.Runtime.Adapters
                 return new ValidationIssue(ValidationSeverity.Error, "RuntimeSerializer", "Program XML is required.");
             }
 
+            var exception = runtimeValidation(xml);
+            if (exception != null)
+            {
+                var diagnostic = ExceptionDiagnostic.From(exception, "RuntimeValidation");
+                return new ValidationIssue(
+                    ValidationSeverity.Error,
+                    "RuntimeSerializer",
+                    "Program XML is not accepted by the current runtime: [" + diagnostic.Stage + "] " +
+                        diagnostic.DisplayMessage);
+            }
+
+            return null;
+        }
+
+        private Exception? ValidateRuntimeProgram(string xml)
+        {
             try
             {
                 serializer.DeserializeFlightProgram(XElement.Parse(xml));
@@ -151,11 +231,14 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                return new ValidationIssue(
-                    ValidationSeverity.Error,
-                    "RuntimeSerializer",
-                    "Program XML is not accepted by the current runtime: " + exception.Message);
+                return exception;
             }
+        }
+
+        private static string FormatDiagnostic(string friendlyPrefix, Exception exception, string stage)
+        {
+            var diagnostic = ExceptionDiagnostic.From(exception, stage);
+            return friendlyPrefix + "[" + diagnostic.Stage + "] " + diagnostic.DisplayMessage;
         }
 
         private RuntimeContract GetEditorContract()
@@ -175,42 +258,68 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                var game = ModApi.Common.Game.Instance;
-                var flightScene = game == null ? null : game.FlightScene;
-                var craftScript = flightScene?.CraftNode?.CraftScript;
-                if (RuntimeContractProbe.TryFindFlightProgramOnCraft(craftScript, out program))
+                program = publicFlightProgramResolver();
+                if (program != null)
                 {
-                    return true;
-                }
-
-                if (flightScene != null && RuntimeContractProbe.TryFindFlightProgramMember(flightScene.GetType(), out var member))
-                {
-                    program = ReadFlightProgram(flightScene, member);
                     return true;
                 }
             }
             catch (Exception exception)
             {
-                error = "Unable to access the public flight scene: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to access the public flight scene: ",
+                    exception,
+                    "PublicFlightProgramAccess");
                 return false;
             }
 
-            if (probe.TryFindFlightProgramFallback(out var instance, out var fallbackMember))
+            try
             {
-                try
+                program = fallbackFlightProgramResolver();
+                if (program != null)
                 {
-                    program = ReadFlightProgram(instance, fallbackMember);
                     return true;
                 }
-                catch (Exception exception)
-                {
-                    error = "Unable to read the resolved flight program: " + exception.Message;
-                    return false;
-                }
+            }
+            catch (Exception exception)
+            {
+                error = FormatDiagnostic(
+                    "Unable to read the resolved flight program: ",
+                    exception,
+                    "FallbackFlightProgramAccess");
+                return false;
             }
 
             error = "Flight program is not available in the current scene.";
             return false;
+        }
+
+        private FlightProgram? ResolvePublicFlightProgram()
+        {
+            var game = ModApi.Common.Game.Instance;
+            var flightScene = game == null ? null : game.FlightScene;
+            var craftScript = flightScene?.CraftNode?.CraftScript;
+            if (RuntimeContractProbe.TryFindFlightProgramOnCraft(craftScript, out var program))
+            {
+                return program;
+            }
+
+            if (flightScene != null && RuntimeContractProbe.TryFindFlightProgramMember(flightScene.GetType(), out var member))
+            {
+                return ReadFlightProgram(flightScene, member);
+            }
+
+            return null;
+        }
+
+        private FlightProgram? ResolveFallbackFlightProgram()
+        {
+            if (!probe.TryFindFlightProgramFallback(out var instance, out var member))
+            {
+                return null;
+            }
+
+            return ReadFlightProgram(instance, member);
         }
 
         private string Serialize(FlightProgram program)

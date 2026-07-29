@@ -17,6 +17,25 @@ namespace VizzyGPT.Core.Tests.Api
     {
         private const string ApiKey = "sk-task5-secret";
         private const string BaseHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        private const string ProtectedRootInstruction =
+            "Never add, remove, replace, or move the direct Program containers Variables, " +
+            "Instructions, or Expressions. Modify only their permitted descendants.";
+
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Endpoint_system_instruction_protects_direct_program_containers(ApiMode mode)
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, ValidEnvelope("Protected roots"))));
+
+            await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            var payload = ParseBody(transport.Requests.Single());
+            var instruction = mode == ApiMode.Responses
+                ? (string?)payload["input"]
+                : (string?)((JArray)payload["messages"]!)[0]!["content"];
+            Assert.That(instruction, Does.Contain(ProtectedRootInstruction));
+        }
 
         [Test]
         public async Task Responses_posts_strict_schema_request_and_normalizes_standard_output()
@@ -45,6 +64,180 @@ namespace VizzyGPT.Core.Tests.Api
             AssertStrictEnvelopeSchema((JObject)format["schema"]!);
 
             AssertValidResponse(result, "Added yaw");
+        }
+
+        [Test]
+        public async Task Responses_normalizes_reasoning_summaries_and_nonnegative_usage()
+        {
+            var body = new JObject
+            {
+                ["output"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "reasoning",
+                        ["encrypted_content"] = "must-not-be-exposed",
+                        ["summary"] = new JArray(
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = "Checked the control branches."
+                            },
+                            new JObject
+                            {
+                                ["type"] = "encrypted_content",
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = "Verified the patch envelope."
+                            })
+                    },
+                    ResponseMessage(ValidEnvelope("Done"))),
+                ["usage"] = new JObject
+                {
+                    ["input_tokens"] = 100,
+                    ["output_tokens"] = 20
+                }
+            };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
+
+            Assert.That(
+                result.Metadata.ReasoningSummary,
+                Is.EqualTo("Checked the control branches.\nVerified the patch envelope."));
+            Assert.That(result.Metadata.InputTokens, Is.EqualTo(100));
+            Assert.That(result.Metadata.OutputTokens, Is.EqualTo(20));
+            Assert.That(result.Metadata.WasSchemaRepair, Is.False);
+        }
+
+        [Test]
+        public async Task Responses_ignores_negative_usage_and_unknown_reasoning_fields()
+        {
+            var body = new JObject
+            {
+                ["output"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "reasoning",
+                        ["content"] = new JArray(new JObject
+                        {
+                            ["type"] = "reasoning_text",
+                            ["text"] = "must-not-be-exposed"
+                        })
+                    },
+                    ResponseMessage(ValidEnvelope("No summary"))),
+                ["usage"] = new JObject
+                {
+                    ["input_tokens"] = -1,
+                    ["output_tokens"] = 0
+                }
+            };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
+
+            Assert.That(result.Metadata.ReasoningSummary, Is.Null);
+            Assert.That(result.Metadata.InputTokens, Is.Null);
+            Assert.That(result.Metadata.OutputTokens, Is.Zero);
+        }
+
+        [Test]
+        public async Task Responses_ignores_malformed_and_null_reasoning_summary_members()
+        {
+            var body = new JObject
+            {
+                ["output"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "reasoning",
+                        ["summary"] = new JArray(
+                            JValue.CreateNull(),
+                            new JObject
+                            {
+                                ["type"] = JValue.CreateNull(),
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = new JObject { ["unexpected"] = true },
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = new JArray("summary_text"),
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = JValue.CreateNull()
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = new JObject { ["unexpected"] = true }
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = "Accepted provider summary."
+                            })
+                    },
+                    ResponseMessage(ValidEnvelope("Valid despite malformed metadata")))
+            };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
+
+            AssertValidResponse(result, "Valid despite malformed metadata");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Accepted provider summary."));
+        }
+
+        [TestCase(ApiMode.Responses, "null")]
+        [TestCase(ApiMode.Responses, "[]")]
+        [TestCase(ApiMode.ChatCompletions, "null")]
+        [TestCase(ApiMode.ChatCompletions, "[]")]
+        public async Task Optional_usage_with_null_or_non_object_shape_is_ignored(ApiMode mode, string usageJson)
+        {
+            var body = JObject.Parse(ModelBody(mode, ValidEnvelope("No usable usage")));
+            body["usage"] = JToken.Parse(usageJson);
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(result.Metadata.InputTokens, Is.Null);
+            Assert.That(result.Metadata.OutputTokens, Is.Null);
+        }
+
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Optional_usage_integer_overflow_is_ignored(ApiMode mode)
+        {
+            var body = JObject.Parse(ModelBody(mode, ValidEnvelope("Overflow ignored")));
+            body["usage"] = mode == ApiMode.Responses
+                ? new JObject
+                {
+                    ["input_tokens"] = (long)int.MaxValue + 1,
+                    ["output_tokens"] = long.MaxValue
+                }
+                : new JObject
+                {
+                    ["prompt_tokens"] = (long)int.MaxValue + 1,
+                    ["completion_tokens"] = long.MaxValue
+                };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(result.Metadata.InputTokens, Is.Null);
+            Assert.That(result.Metadata.OutputTokens, Is.Null);
         }
 
         [Test]
@@ -95,6 +288,39 @@ namespace VizzyGPT.Core.Tests.Api
             AssertStrictEnvelopeSchema((JObject)jsonSchema["schema"]!);
 
             AssertValidResponse(result, "Changed pitch");
+            Assert.That(result.Metadata.ReasoningSummary, Is.Null);
+        }
+
+        [Test]
+        public async Task ChatCompletions_accepts_only_plain_string_reasoning_summary_and_usage()
+        {
+            var stringSummary = ChatBodyObject(ValidEnvelope("String summary"));
+            stringSummary["choices"]![0]!["message"]!["reasoning_summary"] = "Checked compatible fields.";
+            stringSummary["usage"] = new JObject
+            {
+                ["prompt_tokens"] = 45,
+                ["completion_tokens"] = 12
+            };
+            var objectSummary = ChatBodyObject(ValidEnvelope("Object summary"));
+            objectSummary["choices"]![0]!["message"]!["reasoning_summary"] = new JObject
+            {
+                ["text"] = "must-not-be-exposed"
+            };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, stringSummary.ToString(Formatting.None)));
+            transport.Enqueue(Response(200, objectSummary.ToString(Formatting.None)));
+
+            var accepted = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.ChatCompletions),
+                CancellationToken.None);
+            var ignored = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.ChatCompletions),
+                CancellationToken.None);
+
+            Assert.That(accepted.Metadata.ReasoningSummary, Is.EqualTo("Checked compatible fields."));
+            Assert.That(accepted.Metadata.InputTokens, Is.EqualTo(45));
+            Assert.That(accepted.Metadata.OutputTokens, Is.EqualTo(12));
+            Assert.That(ignored.Metadata.ReasoningSummary, Is.Null);
         }
 
         [Test]
@@ -524,9 +750,24 @@ namespace VizzyGPT.Core.Tests.Api
         [Test]
         public async Task Invalid_envelope_triggers_exactly_one_repair_containing_error_and_output()
         {
+            var repairedBody = JObject.Parse(ResponsesBody(ValidEnvelope("Repaired envelope")));
+            ((JArray)repairedBody["output"]!).Insert(0, new JObject
+            {
+                ["type"] = "reasoning",
+                ["summary"] = new JArray(new JObject
+                {
+                    ["type"] = "summary_text",
+                    ["text"] = "Rechecked the repaired envelope."
+                })
+            });
+            repairedBody["usage"] = new JObject
+            {
+                ["input_tokens"] = 87,
+                ["output_tokens"] = 19
+            };
             var transport = new FakeTransport();
             transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
-            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Repaired envelope"))));
+            transport.Enqueue(Response(200, repairedBody.ToString(Formatting.None)));
 
             var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
 
@@ -536,6 +777,10 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(repairInput, Does.Contain("not-json-output"));
             Assert.That(repairInput, Does.Match("(?i)(validation|invalid|parse)"));
             AssertValidResponse(result, "Repaired envelope");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Rechecked the repaired envelope."));
+            Assert.That(result.Metadata.InputTokens, Is.EqualTo(87));
+            Assert.That(result.Metadata.OutputTokens, Is.EqualTo(19));
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
         }
 
         [Test]
@@ -578,6 +823,40 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(displayText, Does.Not.Contain("bearer-secret-one"));
             Assert.That(displayText, Does.Not.Contain("json-secret"));
             Assert.That(result.Diagnostics.All(IsDisplaySafeSingleLine), Is.True);
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
+        [Test]
+        public async Task Repair_refusal_marks_the_schema_repair_as_consumed()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
+            transport.Enqueue(Response(200, RefusalBody("I cannot repair that response.")));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(result.Message, Is.EqualTo("I cannot repair that response."));
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Patch, Is.Null);
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
+        [Test]
+        public async Task Disabled_schema_repair_returns_after_the_first_invalid_output()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses, allowSchemaRepair: false),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Patch, Is.Null);
         }
 
         [Test]
@@ -684,7 +963,10 @@ namespace VizzyGPT.Core.Tests.Api
                 TimeSpan.FromSeconds(1)));
         }
 
-        private static AiRequest Request(ApiMode mode, Uri? baseUri = null)
+        private static AiRequest Request(
+            ApiMode mode,
+            Uri? baseUri = null,
+            bool allowSchemaRepair = true)
         {
             return new AiRequest(
                 mode,
@@ -693,7 +975,8 @@ namespace VizzyGPT.Core.Tests.Api
                 "gpt-test",
                 baseUri ?? new Uri("https://api.example.test/openai/"),
                 ApiKey,
-                TimeSpan.FromSeconds(17));
+                TimeSpan.FromSeconds(17),
+                allowSchemaRepair);
         }
 
         private static void AssertStrictEnvelopeSchema(JObject schema)
@@ -913,17 +1196,25 @@ namespace VizzyGPT.Core.Tests.Api
         {
             return new JObject
             {
-                ["output"] = new JArray(new JObject
-                {
-                    ["type"] = itemType,
-                    ["role"] = role,
-                    ["content"] = new JArray(new JObject
-                    {
-                        ["type"] = "output_text",
-                        ["text"] = output
-                    })
-                })
+                ["output"] = new JArray(ResponseMessage(output, itemType, role))
             }.ToString(Formatting.None);
+        }
+
+        private static JObject ResponseMessage(
+            string output,
+            string itemType = "message",
+            string role = "assistant")
+        {
+            return new JObject
+            {
+                ["type"] = itemType,
+                ["role"] = role,
+                ["content"] = new JArray(new JObject
+                {
+                    ["type"] = "output_text",
+                    ["text"] = output
+                })
+            };
         }
 
         private static string RefusalBody(string refusal)
@@ -945,6 +1236,11 @@ namespace VizzyGPT.Core.Tests.Api
 
         private static string ChatBody(string output)
         {
+            return ChatBodyObject(output).ToString(Formatting.None);
+        }
+
+        private static JObject ChatBodyObject(string output)
+        {
             return new JObject
             {
                 ["choices"] = new JArray(new JObject
@@ -956,7 +1252,7 @@ namespace VizzyGPT.Core.Tests.Api
                         ["content"] = output
                     }
                 })
-            }.ToString(Formatting.None);
+            };
         }
 
         private static string ModelBody(ApiMode mode, string output)

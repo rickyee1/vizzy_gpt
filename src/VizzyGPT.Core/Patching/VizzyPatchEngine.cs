@@ -46,6 +46,10 @@ namespace VizzyGPT.Core.Patching
             new[] { "text", "number", "bool", "style", "event", "property", "op", "variableName", "pos" },
             StringComparer.Ordinal);
 
+        private static readonly HashSet<string> ProtectedRootNames = new HashSet<string>(
+            new[] { "Variables", "Instructions", "Expressions" },
+            StringComparer.Ordinal);
+
         public static PatchResult Apply(VizzyProgramDocument document, PatchDocument patch)
         {
             if (document == null)
@@ -176,6 +180,7 @@ namespace VizzyGPT.Core.Patching
                 throw new PatchApplyException("Sibling insertion targets must be direct children of an Instructions container.");
             }
 
+            RejectProtectedNodeSpec(operation.Node!);
             var node = operation.Node!.ToXElement();
             if (before)
             {
@@ -193,6 +198,7 @@ namespace VizzyGPT.Core.Patching
         {
             var target = Resolve(document, operation.Target!);
             RequireInstructionsContainer(target, "Child insertion target");
+            RejectProtectedNodeSpec(operation.Node!);
             target.Add(operation.Node!.ToXElement());
             return "Inserted <" + SingleLine(operation.Node.Element) + "> into " + Describe(operation.Target!) + ".";
         }
@@ -200,7 +206,9 @@ namespace VizzyGPT.Core.Patching
         private static string ReplaceNode(VizzyProgramDocument document, PatchOperation operation)
         {
             var target = Resolve(document, operation.Target!);
+            RejectProtectedRoot(target, document, "Replacement target");
             RequireEditableSubtree(document, target, "Replacement target");
+            RejectProtectedNodeSpec(operation.Node!);
 
             var replacement = operation.Node!.ToXElement();
             if (replacement.Attribute("pos") == null && target.Attribute("pos") is XAttribute targetPosition)
@@ -215,6 +223,7 @@ namespace VizzyGPT.Core.Patching
         private static string RemoveNode(VizzyProgramDocument document, PatchOperation operation)
         {
             var target = Resolve(document, operation.Target!);
+            RejectProtectedRoot(target, document, "Removal target");
             RequireEditableSubtree(document, target, "Removal target");
             target.Remove();
             return "Removed node " + Describe(operation.Target!) + ".";
@@ -224,6 +233,7 @@ namespace VizzyGPT.Core.Patching
         {
             var target = Resolve(document, operation.Target!);
             var destination = Resolve(document, operation.Destination!);
+            RejectProtectedRoot(target, document, "Move target");
             RequireEditableSubtree(document, target, "Move target");
             RequireInstructionsContainer(destination, "Move destination");
 
@@ -309,6 +319,24 @@ namespace VizzyGPT.Core.Patching
             if (!isEditable)
             {
                 throw new PatchApplyException(context + " must be inside an instruction or expression subtree and cannot be a structural root.");
+            }
+        }
+
+        private static void RejectProtectedRoot(XElement target, VizzyProgramDocument document, string context)
+        {
+            if (ReferenceEquals(target.Parent, document.Root) &&
+                ProtectedRootNames.Contains(target.Name.LocalName))
+            {
+                throw new PatchApplyException(context + " cannot target a protected structural root.");
+            }
+        }
+
+        private static void RejectProtectedNodeSpec(NodeSpec node)
+        {
+            if (ProtectedRootNames.Contains(node.Element))
+            {
+                throw new PatchApplyException(
+                    "Patch node cannot create a protected structural root inside an editable subtree.");
             }
         }
 

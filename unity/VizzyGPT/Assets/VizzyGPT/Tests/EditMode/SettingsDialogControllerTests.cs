@@ -1,9 +1,15 @@
 #nullable enable
 
 using System;
+using System.Collections;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using TMPro;
+using UnityEngine;
+using UnityEngine.TestTools;
+using UnityEngine.UI;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
 using VizzyGPT.Core.Storage;
@@ -21,7 +27,8 @@ namespace VizzyGPT.Tests.EditMode
                 store,
                 value => "protected:" + value,
                 value => value.Substring("protected:".Length),
-                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())));
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft(
                 "https://api.example.test/v1",
                 ApiMode.Auto,
@@ -51,7 +58,8 @@ namespace VizzyGPT.Tests.EditMode
                 {
                     observed = request;
                     return Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>()));
-                });
+                },
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft(
                 "http://127.0.0.1:8787",
                 ApiMode.ChatCompletions,
@@ -81,7 +89,8 @@ namespace VizzyGPT.Tests.EditMode
                 {
                     observed = cancellationToken;
                     return completion.Task;
-                });
+                },
+                _ => Task.CompletedTask);
             var draft = new VizzyGptSettingsDraft("https://api.example.test", ApiMode.Auto, "test", "key", 10);
 
             var pending = controller.TestConnectionAsync(draft);
@@ -92,6 +101,210 @@ namespace VizzyGPT.Tests.EditMode
 
             Assert.That(result.Success, Is.False);
             Assert.That(result.Status, Is.EqualTo("Connection test cancelled."));
+        }
+
+        [Test]
+        public void Clear_history_calls_callback_once_without_persisting_settings()
+        {
+            var store = new FakeStore();
+            var clearCalls = 0;
+            var controller = new SettingsDialogController(
+                store,
+                value => value,
+                value => value,
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ =>
+                {
+                    clearCalls++;
+                    return Task.CompletedTask;
+                });
+
+            var result = controller.ClearHistoryAsync().GetAwaiter().GetResult();
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(result.Status, Is.EqualTo("Current conversation cleared."));
+            Assert.That(clearCalls, Is.EqualTo(1));
+            Assert.That(store.SaveSettingsCalls, Is.Zero);
+            Assert.That(store.SaveProtectedApiKeyCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Clear_history_failure_is_nonfatal_and_sanitized()
+        {
+            var controller = new SettingsDialogController(
+                new FakeStore(),
+                value => value,
+                value => value,
+                (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                _ => throw new InvalidOperationException("Authorization: Bearer clear-secret"));
+
+            var result = controller.ClearHistoryAsync().GetAwaiter().GetResult();
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.Status, Does.Contain("[REDACTED]"));
+            Assert.That(result.Status, Does.Not.Contain("clear-secret"));
+        }
+
+        [Test]
+        public void Clear_history_button_does_not_close_dialog()
+        {
+            var root = new GameObject("settings-clear-history-test");
+            try
+            {
+                var view = root.AddComponent<SettingsDialogViewController>();
+                var controller = new SettingsDialogController(
+                    new FakeStore(),
+                    value => value,
+                    value => value,
+                    (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                    _ => Task.CompletedTask);
+                var closeCalls = 0;
+                view.Configure(controller, () => { }, () => closeCalls++);
+
+                view.OnClearHistoryButtonClicked();
+
+                Assert.That(closeCalls, Is.Zero);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator Rapid_clear_clicks_share_one_owned_operation_and_toggle_button()
+        {
+            var root = new GameObject("settings-clear-history-double-click-test");
+            var buttonRoot = new GameObject("clear-button", typeof(RectTransform), typeof(Button));
+            var statusRoot = new GameObject("clear-status", typeof(RectTransform), typeof(TestTmpText));
+            buttonRoot.transform.SetParent(root.transform, false);
+            statusRoot.transform.SetParent(root.transform, false);
+            try
+            {
+                var completion = new TaskCompletionSource<bool>();
+                var clearCalls = 0;
+                var store = new FakeStore();
+                var controller = new SettingsDialogController(
+                    store,
+                    value => value,
+                    value => value,
+                    (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                    async cancellationToken =>
+                    {
+                        clearCalls++;
+                        await completion.Task;
+                        cancellationToken.ThrowIfCancellationRequested();
+                    });
+                var view = root.AddComponent<SettingsDialogViewController>();
+                var closeCalls = 0;
+                view.Configure(controller, () => { }, () => closeCalls++);
+                var button = buttonRoot.GetComponent<Button>();
+                var status = statusRoot.GetComponent<TestTmpText>();
+                SetPrivateField(view, "clearHistoryButton", button);
+                SetPrivateField(view, "connectionStatusText", status);
+
+                view.OnClearHistoryButtonClicked();
+                view.OnClearHistoryButtonClicked();
+
+                Assert.That(clearCalls, Is.EqualTo(1));
+                Assert.That(button.interactable, Is.False);
+                completion.SetResult(true);
+                for (var attempt = 0; attempt < 100 && !button.interactable; attempt++)
+                {
+                    yield return null;
+                }
+
+                Assert.That(button.interactable, Is.True);
+                Assert.That(status.text, Is.EqualTo("Current conversation cleared."));
+                Assert.That(closeCalls, Is.Zero);
+                Assert.That(store.SaveSettingsCalls, Is.Zero);
+                Assert.That(store.SaveProtectedApiKeyCalls, Is.Zero);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator Destroy_cancels_clear_and_suppresses_disposed_status_update()
+        {
+            var root = new GameObject("settings-clear-history-dispose-test");
+            var buttonRoot = new GameObject("clear-button", typeof(RectTransform), typeof(Button));
+            var statusRoot = new GameObject("clear-status", typeof(RectTransform), typeof(TestTmpText));
+            buttonRoot.transform.SetParent(root.transform, false);
+            try
+            {
+                var observedToken = default(CancellationToken);
+                var cancellationObserved = false;
+                var started = new TaskCompletionSource<bool>();
+                var completion = new TaskCompletionSource<bool>();
+                var controller = new SettingsDialogController(
+                    new FakeStore(),
+                    value => value,
+                    value => value,
+                    (_, __) => Task.FromResult(new AiResponse("ok", null, false, Array.Empty<string>())),
+                    async cancellationToken =>
+                    {
+                        observedToken = cancellationToken;
+                        started.TrySetResult(true);
+                        using (cancellationToken.Register(() =>
+                        {
+                            cancellationObserved = true;
+                            completion.TrySetCanceled();
+                        }))
+                        {
+                            await completion.Task;
+                        }
+                    });
+                var view = root.AddComponent<SettingsDialogViewController>();
+                view.Configure(controller, () => { }, () => { });
+                var status = statusRoot.GetComponent<TestTmpText>();
+                status.text = "unchanged";
+                SetPrivateField(view, "clearHistoryButton", buttonRoot.GetComponent<Button>());
+                SetPrivateField(view, "connectionStatusText", status);
+
+                view.OnClearHistoryButtonClicked();
+                Assert.That(started.Task.IsCompleted, Is.True);
+                Assert.That(buttonRoot.GetComponent<Button>().interactable, Is.False);
+                InvokePrivateMethod(view, "OnDestroy");
+                UnityEngine.Object.DestroyImmediate(root);
+                yield return null;
+
+                Assert.That(cancellationObserved, Is.True);
+                Assert.That(observedToken.IsCancellationRequested, Is.True);
+                Assert.That(status.text, Is.EqualTo("unchanged"));
+            }
+            finally
+            {
+                if (root != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(root);
+                }
+
+                UnityEngine.Object.DestroyImmediate(statusRoot);
+            }
+        }
+
+        private static void SetPrivateField(object target, string fieldName, object value)
+        {
+            var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null, fieldName);
+            field!.SetValue(target, value);
+        }
+
+        private static void InvokePrivateMethod(object target, string methodName)
+        {
+            var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null, methodName);
+            method!.Invoke(target, null);
+        }
+
+        private sealed class TestTmpText : TMP_Text
+        {
+            protected override void LoadFontAsset()
+            {
+            }
         }
 
         private sealed class FakeStore : IDataStore

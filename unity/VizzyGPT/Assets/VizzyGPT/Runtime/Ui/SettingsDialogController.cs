@@ -8,7 +8,9 @@ using System.Threading.Tasks;
 using ModApi.Ui;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 using VizzyGPT.Core.Api;
+using VizzyGPT.Core.Diagnostics;
 using VizzyGPT.Core.Storage;
 using VizzyGPT.Runtime.Security;
 
@@ -55,18 +57,21 @@ namespace VizzyGPT.Runtime.Ui
         private readonly Func<string, string>? protect;
         private readonly Func<string, string>? unprotect;
         private readonly Func<AiRequest, CancellationToken, Task<AiResponse>>? testConnectionAsync;
+        private readonly Func<CancellationToken, Task>? clearHistoryAsync;
         private CancellationTokenSource? connectionCancellation;
 
         public SettingsDialogController(
             IDataStore store,
             Func<string, string> protect,
             Func<string, string> unprotect,
-            Func<AiRequest, CancellationToken, Task<AiResponse>> testConnectionAsync)
+            Func<AiRequest, CancellationToken, Task<AiResponse>> testConnectionAsync,
+            Func<CancellationToken, Task> clearHistoryAsync)
         {
             configuredStore = store ?? throw new ArgumentNullException(nameof(store));
             this.protect = protect ?? throw new ArgumentNullException(nameof(protect));
             this.unprotect = unprotect ?? throw new ArgumentNullException(nameof(unprotect));
             this.testConnectionAsync = testConnectionAsync ?? throw new ArgumentNullException(nameof(testConnectionAsync));
+            this.clearHistoryAsync = clearHistoryAsync ?? throw new ArgumentNullException(nameof(clearHistoryAsync));
         }
 
         public string DestinationHost { get; private set; } = string.Empty;
@@ -149,6 +154,23 @@ namespace VizzyGPT.Runtime.Ui
             connectionCancellation?.Cancel();
         }
 
+        public async Task<SettingsConnectionResult> ClearHistoryAsync(
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await RequireClearHistory()(cancellationToken).ConfigureAwait(false);
+                return new SettingsConnectionResult(true, "Current conversation cleared.");
+            }
+            catch (Exception exception)
+            {
+                var diagnostic = ExceptionDiagnostic.From(exception, "ClearConversation");
+                return new SettingsConnectionResult(
+                    false,
+                    "Could not clear current conversation: " + diagnostic.DisplayMessage);
+            }
+        }
+
         private static AiRequest BuildRequest(VizzyGptSettingsDraft draft)
         {
             if (draft == null)
@@ -185,6 +207,11 @@ namespace VizzyGPT.Runtime.Ui
         {
             return testConnectionAsync ?? throw new InvalidOperationException("Connection client is not configured.");
         }
+
+        private Func<CancellationToken, Task> RequireClearHistory()
+        {
+            return clearHistoryAsync ?? throw new InvalidOperationException("Clear-history command is not configured.");
+        }
     }
 
     public sealed class SettingsDialogViewController : MonoBehaviour
@@ -199,6 +226,8 @@ namespace VizzyGPT.Runtime.Ui
         private TMP_InputField? timeoutInput;
         private TMP_Text? destinationHostText;
         private TMP_Text? connectionStatusText;
+        private Button? clearHistoryButton;
+        private CancellationTokenSource? clearHistoryCancellation;
         private bool disposed;
 
         public void Configure(SettingsDialogController value, Action onSettingsSaved, Action closeAction)
@@ -222,6 +251,7 @@ namespace VizzyGPT.Runtime.Ui
             timeoutInput = RequireElement<TMP_InputField>(layout, "timeout-input");
             destinationHostText = RequireElement<TMP_Text>(layout, "destination-host-text");
             connectionStatusText = RequireElement<TMP_Text>(layout, "connection-status-text");
+            clearHistoryButton = RequireElement<Button>(layout, "clear-history-button");
             if (baseUrlInput != null)
             {
                 baseUrlInput.onValueChanged.AddListener(OnBaseUrlChanged);
@@ -264,6 +294,48 @@ namespace VizzyGPT.Runtime.Ui
             catch (Exception exception)
             {
                 RenderStatus(exception.Message);
+            }
+        }
+
+        public async void OnClearHistoryButtonClicked()
+        {
+            if (disposed || clearHistoryCancellation != null)
+            {
+                return;
+            }
+
+            var activeController = RequireController();
+            var cancellation = new CancellationTokenSource();
+            clearHistoryCancellation = cancellation;
+            if (clearHistoryButton != null)
+            {
+                clearHistoryButton.interactable = false;
+            }
+
+            try
+            {
+                var result = await activeController.ClearHistoryAsync(cancellation.Token);
+                if (disposed ||
+                    cancellation.IsCancellationRequested ||
+                    !ReferenceEquals(controller, activeController))
+                {
+                    return;
+                }
+
+                RenderStatus(result.Status);
+            }
+            finally
+            {
+                if (ReferenceEquals(clearHistoryCancellation, cancellation))
+                {
+                    clearHistoryCancellation = null;
+                    if (!disposed && clearHistoryButton != null)
+                    {
+                        clearHistoryButton.interactable = true;
+                    }
+                }
+
+                cancellation.Dispose();
             }
         }
 
@@ -367,6 +439,7 @@ namespace VizzyGPT.Runtime.Ui
         private void OnDestroy()
         {
             disposed = true;
+            clearHistoryCancellation?.Cancel();
             controller?.CancelTestConnection();
             if (baseUrlInput != null)
             {
@@ -376,6 +449,7 @@ namespace VizzyGPT.Runtime.Ui
             controller = null;
             settingsSaved = null;
             close = null;
+            clearHistoryButton = null;
         }
     }
 }
