@@ -501,13 +501,12 @@ namespace VizzyGPT.Core.Api
             var summaries = root["output"] is JArray output
                 ? output
                     .OfType<JObject>()
-                    .Where(item =>
-                        string.Equals(item["type"]?.Value<string>(), "reasoning", StringComparison.Ordinal))
+                    .Where(item => HasStringValue(item, "type", "reasoning"))
                     .SelectMany(item => item["summary"] is JArray summary
                         ? summary.OfType<JObject>()
                         : Enumerable.Empty<JObject>())
                     .Where(item =>
-                        string.Equals(item["type"]?.Value<string>(), "summary_text", StringComparison.Ordinal) &&
+                        HasStringValue(item, "type", "summary_text") &&
                         item["text"]?.Type == JTokenType.String)
                     .Select(item => item["text"]!.Value<string>()!)
                     .Where(text => !string.IsNullOrWhiteSpace(text))
@@ -519,6 +518,13 @@ namespace VizzyGPT.Core.Api
                 ReadNonNegativeInteger(usage?["input_tokens"]),
                 ReadNonNegativeInteger(usage?["output_tokens"]),
                 wasSchemaRepair: false);
+        }
+
+        private static bool HasStringValue(JObject value, string propertyName, string expectedValue)
+        {
+            var token = value[propertyName];
+            return token?.Type == JTokenType.String &&
+                string.Equals(token.Value<string>(), expectedValue, StringComparison.Ordinal);
         }
 
         private static AiResponseMetadata ExtractChatMetadata(JObject root, JObject message)

@@ -146,6 +146,101 @@ namespace VizzyGPT.Core.Tests.Api
         }
 
         [Test]
+        public async Task Responses_ignores_malformed_and_null_reasoning_summary_members()
+        {
+            var body = new JObject
+            {
+                ["output"] = new JArray(
+                    new JObject
+                    {
+                        ["type"] = "reasoning",
+                        ["summary"] = new JArray(
+                            JValue.CreateNull(),
+                            new JObject
+                            {
+                                ["type"] = JValue.CreateNull(),
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = new JObject { ["unexpected"] = true },
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = new JArray("summary_text"),
+                                ["text"] = "must-not-be-exposed"
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = JValue.CreateNull()
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = new JObject { ["unexpected"] = true }
+                            },
+                            new JObject
+                            {
+                                ["type"] = "summary_text",
+                                ["text"] = "Accepted provider summary."
+                            })
+                    },
+                    ResponseMessage(ValidEnvelope("Valid despite malformed metadata")))
+            };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
+
+            AssertValidResponse(result, "Valid despite malformed metadata");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Accepted provider summary."));
+        }
+
+        [TestCase(ApiMode.Responses, "null")]
+        [TestCase(ApiMode.Responses, "[]")]
+        [TestCase(ApiMode.ChatCompletions, "null")]
+        [TestCase(ApiMode.ChatCompletions, "[]")]
+        public async Task Optional_usage_with_null_or_non_object_shape_is_ignored(ApiMode mode, string usageJson)
+        {
+            var body = JObject.Parse(ModelBody(mode, ValidEnvelope("No usable usage")));
+            body["usage"] = JToken.Parse(usageJson);
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(result.Metadata.InputTokens, Is.Null);
+            Assert.That(result.Metadata.OutputTokens, Is.Null);
+        }
+
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Optional_usage_integer_overflow_is_ignored(ApiMode mode)
+        {
+            var body = JObject.Parse(ModelBody(mode, ValidEnvelope("Overflow ignored")));
+            body["usage"] = mode == ApiMode.Responses
+                ? new JObject
+                {
+                    ["input_tokens"] = (long)int.MaxValue + 1,
+                    ["output_tokens"] = long.MaxValue
+                }
+                : new JObject
+                {
+                    ["prompt_tokens"] = (long)int.MaxValue + 1,
+                    ["completion_tokens"] = long.MaxValue
+                };
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body.ToString(Formatting.None)));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(result.Metadata.InputTokens, Is.Null);
+            Assert.That(result.Metadata.OutputTokens, Is.Null);
+        }
+
+        [Test]
         public async Task Responses_normalizes_top_level_output_text_compatibility_shape()
         {
             var transport = new FakeTransport();
@@ -655,9 +750,24 @@ namespace VizzyGPT.Core.Tests.Api
         [Test]
         public async Task Invalid_envelope_triggers_exactly_one_repair_containing_error_and_output()
         {
+            var repairedBody = JObject.Parse(ResponsesBody(ValidEnvelope("Repaired envelope")));
+            ((JArray)repairedBody["output"]!).Insert(0, new JObject
+            {
+                ["type"] = "reasoning",
+                ["summary"] = new JArray(new JObject
+                {
+                    ["type"] = "summary_text",
+                    ["text"] = "Rechecked the repaired envelope."
+                })
+            });
+            repairedBody["usage"] = new JObject
+            {
+                ["input_tokens"] = 87,
+                ["output_tokens"] = 19
+            };
             var transport = new FakeTransport();
             transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
-            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Repaired envelope"))));
+            transport.Enqueue(Response(200, repairedBody.ToString(Formatting.None)));
 
             var result = await new OpenAiClient(transport).SendAsync(Request(ApiMode.Responses), CancellationToken.None);
 
@@ -667,6 +777,9 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(repairInput, Does.Contain("not-json-output"));
             Assert.That(repairInput, Does.Match("(?i)(validation|invalid|parse)"));
             AssertValidResponse(result, "Repaired envelope");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Rechecked the repaired envelope."));
+            Assert.That(result.Metadata.InputTokens, Is.EqualTo(87));
+            Assert.That(result.Metadata.OutputTokens, Is.EqualTo(19));
             Assert.That(result.Metadata.WasSchemaRepair, Is.True);
         }
 
