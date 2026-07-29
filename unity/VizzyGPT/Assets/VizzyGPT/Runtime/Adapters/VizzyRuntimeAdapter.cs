@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using ModApi;
 using ModApi.Craft.Program;
 using UnityEngine;
+using VizzyGPT.Core.Diagnostics;
 using VizzyGPT.Core.Validation;
 
 namespace VizzyGPT.Runtime.Adapters
@@ -16,8 +17,19 @@ namespace VizzyGPT.Runtime.Adapters
 
         private readonly ProgramSerializer serializer = new ProgramSerializer();
         private readonly RuntimeContractProbe probe = new RuntimeContractProbe(ResolvePrivateRefreshContract);
+        private readonly Func<string, Exception?> runtimeValidation;
         private RuntimeContract editorContract;
         private RuntimeCompatibilityResult editorCompatibility;
+
+        public VizzyRuntimeAdapter()
+        {
+            runtimeValidation = ValidateRuntimeProgram;
+        }
+
+        internal VizzyRuntimeAdapter(Func<string, Exception?> runtimeValidation)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+        }
 
         public bool IsEditorAvailable => GetEditorContract() != null;
 
@@ -71,7 +83,9 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                error = "Program XML is not accepted by the current runtime: " + exception.Message;
+                var diagnostic = ExceptionDiagnostic.From(exception, "EditorProgramSet");
+                error = "Program XML is not accepted by the current runtime: [" + diagnostic.Stage + "] " +
+                    diagnostic.DisplayMessage;
                 return false;
             }
 
@@ -108,11 +122,15 @@ namespace VizzyGPT.Runtime.Adapters
                 }
                 catch (Exception rollbackException)
                 {
-                    error = "Vizzy editor refresh failed and rollback failed: " + rollbackException.Message;
+                    var diagnostic = ExceptionDiagnostic.From(rollbackException, "EditorRefreshRollback");
+                    error = "Vizzy editor refresh failed and rollback failed: [" + diagnostic.Stage + "] " +
+                        diagnostic.DisplayMessage;
                     return false;
                 }
 
-                error = "Vizzy editor refresh failed; the previous program was restored: " + exception.Message;
+                var refreshDiagnostic = ExceptionDiagnostic.From(exception, "EditorRefresh");
+                error = "Vizzy editor refresh failed; the previous program was restored: [" +
+                    refreshDiagnostic.Stage + "] " + refreshDiagnostic.DisplayMessage;
                 return false;
             }
         }
@@ -144,6 +162,22 @@ namespace VizzyGPT.Runtime.Adapters
                 return new ValidationIssue(ValidationSeverity.Error, "RuntimeSerializer", "Program XML is required.");
             }
 
+            var exception = runtimeValidation(xml);
+            if (exception != null)
+            {
+                var diagnostic = ExceptionDiagnostic.From(exception, "RuntimeValidation");
+                return new ValidationIssue(
+                    ValidationSeverity.Error,
+                    "RuntimeSerializer",
+                    "Program XML is not accepted by the current runtime: [" + diagnostic.Stage + "] " +
+                        diagnostic.DisplayMessage);
+            }
+
+            return null;
+        }
+
+        private Exception? ValidateRuntimeProgram(string xml)
+        {
             try
             {
                 serializer.DeserializeFlightProgram(XElement.Parse(xml));
@@ -151,10 +185,7 @@ namespace VizzyGPT.Runtime.Adapters
             }
             catch (Exception exception)
             {
-                return new ValidationIssue(
-                    ValidationSeverity.Error,
-                    "RuntimeSerializer",
-                    "Program XML is not accepted by the current runtime: " + exception.Message);
+                return exception;
             }
         }
 

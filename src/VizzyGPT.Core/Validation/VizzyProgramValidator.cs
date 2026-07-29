@@ -63,7 +63,8 @@ namespace VizzyGPT.Core.Validation
                     issues.Add(
                         Error(
                             "MissingContainer",
-                            "Program must contain exactly one direct " + requiredContainer + " container.",
+                            "Program must contain exactly one direct " + requiredContainer +
+                                " container; found " + count.ToString(CultureInfo.InvariantCulture) + ".",
                             "/Program[0]"));
                 }
             }

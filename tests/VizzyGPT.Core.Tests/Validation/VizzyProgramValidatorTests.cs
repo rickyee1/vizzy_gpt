@@ -25,6 +25,17 @@ namespace VizzyGPT.Core.Tests.Validation
         }
 
         [Test]
+        public void Validate_reports_the_direct_container_count_when_instructions_is_missing()
+        {
+            var root = XElement.Parse(ValidProgramXml);
+            root.Element("Instructions")!.Remove();
+
+            var report = Validator().Validate(Document(root), Catalog());
+
+            AssertError(report, "MissingContainer", "found 0");
+        }
+
+        [Test]
         public void Validate_reports_duplicate_ids()
         {
             var document = Document(
