@@ -18,17 +18,35 @@ namespace VizzyGPT.Runtime.Adapters
         private readonly ProgramSerializer serializer = new ProgramSerializer();
         private readonly RuntimeContractProbe probe = new RuntimeContractProbe(ResolvePrivateRefreshContract);
         private readonly Func<string, Exception?> runtimeValidation;
+        private readonly Func<FlightProgram?> publicFlightProgramResolver;
+        private readonly Func<FlightProgram?> fallbackFlightProgramResolver;
         private RuntimeContract editorContract;
         private RuntimeCompatibilityResult editorCompatibility;
 
         public VizzyRuntimeAdapter()
         {
             runtimeValidation = ValidateRuntimeProgram;
+            publicFlightProgramResolver = ResolvePublicFlightProgram;
+            fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
         }
 
         internal VizzyRuntimeAdapter(Func<string, Exception?> runtimeValidation)
         {
             this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            publicFlightProgramResolver = ResolvePublicFlightProgram;
+            fallbackFlightProgramResolver = ResolveFallbackFlightProgram;
+        }
+
+        internal VizzyRuntimeAdapter(
+            Func<string, Exception?> runtimeValidation,
+            Func<FlightProgram?> publicFlightProgramResolver,
+            Func<FlightProgram?> fallbackFlightProgramResolver)
+        {
+            this.runtimeValidation = runtimeValidation ?? throw new ArgumentNullException(nameof(runtimeValidation));
+            this.publicFlightProgramResolver = publicFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(publicFlightProgramResolver));
+            this.fallbackFlightProgramResolver = fallbackFlightProgramResolver ??
+                throw new ArgumentNullException(nameof(fallbackFlightProgramResolver));
         }
 
         public bool IsEditorAvailable => GetEditorContract() != null;
@@ -221,42 +239,68 @@ namespace VizzyGPT.Runtime.Adapters
 
             try
             {
-                var game = ModApi.Common.Game.Instance;
-                var flightScene = game == null ? null : game.FlightScene;
-                var craftScript = flightScene?.CraftNode?.CraftScript;
-                if (RuntimeContractProbe.TryFindFlightProgramOnCraft(craftScript, out program))
+                program = publicFlightProgramResolver();
+                if (program != null)
                 {
-                    return true;
-                }
-
-                if (flightScene != null && RuntimeContractProbe.TryFindFlightProgramMember(flightScene.GetType(), out var member))
-                {
-                    program = ReadFlightProgram(flightScene, member);
                     return true;
                 }
             }
             catch (Exception exception)
             {
-                error = "Unable to access the public flight scene: " + exception.Message;
+                error = FormatDiagnostic(
+                    "Unable to access the public flight scene: ",
+                    exception,
+                    "PublicFlightProgramAccess");
                 return false;
             }
 
-            if (probe.TryFindFlightProgramFallback(out var instance, out var fallbackMember))
+            try
             {
-                try
+                program = fallbackFlightProgramResolver();
+                if (program != null)
                 {
-                    program = ReadFlightProgram(instance, fallbackMember);
                     return true;
                 }
-                catch (Exception exception)
-                {
-                    error = "Unable to read the resolved flight program: " + exception.Message;
-                    return false;
-                }
+            }
+            catch (Exception exception)
+            {
+                error = FormatDiagnostic(
+                    "Unable to read the resolved flight program: ",
+                    exception,
+                    "FallbackFlightProgramAccess");
+                return false;
             }
 
             error = "Flight program is not available in the current scene.";
             return false;
+        }
+
+        private FlightProgram? ResolvePublicFlightProgram()
+        {
+            var game = ModApi.Common.Game.Instance;
+            var flightScene = game == null ? null : game.FlightScene;
+            var craftScript = flightScene?.CraftNode?.CraftScript;
+            if (RuntimeContractProbe.TryFindFlightProgramOnCraft(craftScript, out var program))
+            {
+                return program;
+            }
+
+            if (flightScene != null && RuntimeContractProbe.TryFindFlightProgramMember(flightScene.GetType(), out var member))
+            {
+                return ReadFlightProgram(flightScene, member);
+            }
+
+            return null;
+        }
+
+        private FlightProgram? ResolveFallbackFlightProgram()
+        {
+            if (!probe.TryFindFlightProgramFallback(out var instance, out var member))
+            {
+                return null;
+            }
+
+            return ReadFlightProgram(instance, member);
         }
 
         private string Serialize(FlightProgram program)

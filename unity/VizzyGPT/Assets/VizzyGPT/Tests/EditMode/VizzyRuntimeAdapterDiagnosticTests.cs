@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using ModApi.Craft.Program;
 using NUnit.Framework;
 using VizzyGPT.Runtime.Adapters;
 
@@ -62,6 +63,44 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(error, Does.Not.Contain("target of an invocation"));
         }
 
+        [Test]
+        public void Flight_program_xml_sanitizes_public_scene_resolution_failures()
+        {
+            var adapter = CreateAdapter(
+                _ => null,
+                () => throw new TargetInvocationException(new InvalidOperationException(
+                    "Authorization=Basic public-secret; Body: plaintext public response")),
+                () => null);
+
+            var found = adapter.TryGetFlightProgramXml(out _, out var error);
+
+            Assert.That(found, Is.False);
+            Assert.That(error, Does.StartWith("Unable to access the public flight scene: "));
+            Assert.That(error, Does.Contain("PublicFlightProgramAccess"));
+            Assert.That(error, Does.Not.Contain("public-secret"));
+            Assert.That(error, Does.Not.Contain("plaintext public response"));
+            Assert.That(error, Does.Not.Contain("target of an invocation"));
+        }
+
+        [Test]
+        public void Flight_program_xml_sanitizes_fallback_reflection_failures()
+        {
+            var adapter = CreateAdapter(
+                _ => null,
+                () => null,
+                () => throw new TargetInvocationException(new InvalidOperationException(
+                    "Authorization=Basic fallback-secret; Body: plaintext fallback response")));
+
+            var found = adapter.TryGetFlightProgramXml(out _, out var error);
+
+            Assert.That(found, Is.False);
+            Assert.That(error, Does.StartWith("Unable to read the resolved flight program: "));
+            Assert.That(error, Does.Contain("FallbackFlightProgramAccess"));
+            Assert.That(error, Does.Not.Contain("fallback-secret"));
+            Assert.That(error, Does.Not.Contain("plaintext fallback response"));
+            Assert.That(error, Does.Not.Contain("target of an invocation"));
+        }
+
         private static VizzyRuntimeAdapter CreateAdapter(Func<string, Exception> runtimeValidation)
         {
             var constructor = typeof(VizzyRuntimeAdapter).GetConstructor(
@@ -71,6 +110,27 @@ namespace VizzyGPT.Tests.EditMode
                 null);
 
             return (VizzyRuntimeAdapter)constructor.Invoke(new object[] { runtimeValidation });
+        }
+
+        private static VizzyRuntimeAdapter CreateAdapter(
+            Func<string, Exception> runtimeValidation,
+            Func<FlightProgram> publicFlightProgram,
+            Func<FlightProgram> fallbackFlightProgram)
+        {
+            var constructor = typeof(VizzyRuntimeAdapter).GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[]
+                {
+                    typeof(Func<string, Exception>),
+                    typeof(Func<FlightProgram>),
+                    typeof(Func<FlightProgram>)
+                },
+                null);
+
+            Assert.That(constructor, Is.Not.Null);
+            return (VizzyRuntimeAdapter)constructor.Invoke(
+                new object[] { runtimeValidation, publicFlightProgram, fallbackFlightProgram });
         }
     }
 }

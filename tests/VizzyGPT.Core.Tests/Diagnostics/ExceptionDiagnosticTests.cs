@@ -88,6 +88,59 @@ namespace VizzyGPT.Core.Tests.Diagnostics
             Assert.That(diagnostic.TechnicalDetails, Does.EndWith("[TRUNCATED]"));
         }
 
+        [TestCase("\"sensitive string value\"")]
+        [TestCase("true")]
+        [TestCase("42")]
+        [TestCase("null")]
+        public void From_replaces_all_valid_top_level_json_values(string payload)
+        {
+            var diagnostic = ExceptionDiagnostic.From(
+                new InvalidOperationException(payload),
+                "RuntimeValidation");
+
+            Assert.That(diagnostic.DisplayMessage, Is.EqualTo("[REDACTED STRUCTURED PAYLOAD]"));
+            Assert.That(diagnostic.TechnicalDetails, Does.EndWith(": [REDACTED STRUCTURED PAYLOAD]"));
+        }
+
+        [Test]
+        public void From_removes_equals_form_authorization_and_plaintext_request_context()
+        {
+            var diagnostic = ExceptionDiagnostic.From(
+                new InvalidOperationException(
+                    "HTTP 401. Authorization=Basic equals-secret; " +
+                    "Request context: endpoint=/v1/responses; Body: plaintext response"),
+                "RuntimeValidation");
+
+            Assert.That(diagnostic.Code, Is.EqualTo("InvalidOperationException"));
+            Assert.That(diagnostic.Stage, Is.EqualTo("RuntimeValidation"));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("equals-secret"));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("endpoint=/v1/responses"));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("plaintext response"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("equals-secret"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("endpoint=/v1/responses"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("plaintext response"));
+            Assert.That(diagnostic.DisplayMessage, Does.Contain("[REDACTED REQUEST CONTEXT]"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Contain("[REDACTED REQUEST CONTEXT]"));
+        }
+
+        [Test]
+        public void From_removes_plain_request_equals_context_and_body()
+        {
+            var diagnostic = ExceptionDiagnostic.From(
+                new InvalidOperationException(
+                    "HTTP 401. Authorization=Basic request-secret; " +
+                    "Request=/v1/responses; Body=plaintext request response"),
+                "RuntimeValidation");
+
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("request-secret"));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("/v1/responses"));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("plaintext request response"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("request-secret"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("/v1/responses"));
+            Assert.That(diagnostic.TechnicalDetails, Does.Not.Contain("plaintext request response"));
+            Assert.That(diagnostic.DisplayMessage, Does.Contain("[REDACTED REQUEST CONTEXT]"));
+        }
+
         private static void AssertSanitized(string value)
         {
             Assert.That(value, Does.Not.Contain("basic-secret"));
