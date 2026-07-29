@@ -230,6 +230,96 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Render_retires_stale_rows_before_deferred_runtime_destruction()
+        {
+            using (var fixture = new ViewFixture())
+            {
+                var previewCount = 0;
+                var deferDestruction = true;
+                var scheduledForDestruction = new List<GameObject>();
+                Action<GameObject> destroyObject = gameObject =>
+                {
+                    if (deferDestruction)
+                    {
+                        scheduledForDestruction.Add(gameObject);
+                    }
+                    else
+                    {
+                        UnityEngine.Object.DestroyImmediate(gameObject);
+                    }
+                };
+
+                try
+                {
+                    fixture.View = new ConversationMessageListView(
+                        fixture.Content,
+                        fixture.Scroll,
+                        fixture.Composer,
+                        fixture.Font,
+                        () => previewCount++,
+                        gameObject => gameObject.AddComponent<TestTmpText>(),
+                        destroyObject);
+                    fixture.View.Render(new[]
+                    {
+                        Entry("user-1", ConversationRole.User, "keep"),
+                        Entry(
+                            "assistant-1",
+                            ConversationRole.Assistant,
+                            "remove",
+                            reasoning: "reasoning",
+                            error: new ConversationError(
+                                "invalid_patch",
+                                "ValidatingPatch",
+                                "message",
+                                "technical details",
+                                "/Program"),
+                            canPreview: true),
+                        Entry("user-2", ConversationRole.User, "remove"),
+                        Entry("assistant-2", ConversationRole.Assistant, "remove")
+                    });
+                    Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
+                    var staleRow = fixture.Find("message-assistant-1");
+                    var staleReasoningDetail = fixture.Find("message-assistant-1-reasoning-detail");
+                    var staleErrorDetail = fixture.Find("message-assistant-1-error-detail");
+                    var staleReasoningButton = fixture.Button("message-assistant-1-reasoning-button");
+                    var staleErrorButton = fixture.Button("message-assistant-1-error-button");
+                    var stalePreviewButton = fixture.Button("message-assistant-1-preview-button");
+
+                    fixture.View.Render(new[]
+                    {
+                        Entry("user-1", ConversationRole.User, "keep")
+                    });
+
+                    Assert.That(scheduledForDestruction, Has.Count.EqualTo(3));
+                    Assert.That(staleRow.activeSelf, Is.False);
+                    Assert.That(staleRow.transform.parent, Is.Null);
+                    Assert.That(fixture.Content.childCount, Is.EqualTo(1));
+                    Assert.That(fixture.Content.GetChild(0).name, Is.EqualTo("message-user-1"));
+                    Assert.That(fixture.Content.rect.height, Is.LessThanOrEqualTo(fixture.Scroll.viewport.rect.height));
+
+                    staleReasoningButton.onClick.Invoke();
+                    staleErrorButton.onClick.Invoke();
+                    stalePreviewButton.onClick.Invoke();
+
+                    Assert.That(staleReasoningDetail.activeSelf, Is.False);
+                    Assert.That(staleErrorDetail.activeSelf, Is.False);
+                    Assert.That(previewCount, Is.Zero);
+                }
+                finally
+                {
+                    deferDestruction = false;
+                    foreach (var gameObject in scheduledForDestruction)
+                    {
+                        if (gameObject != null)
+                        {
+                            UnityEngine.Object.DestroyImmediate(gameObject);
+                        }
+                    }
+                }
+            }
+        }
+
+        [Test]
         public void Disclosure_and_preview_labels_remain_single_line_inside_narrow_buttons()
         {
             using (var fixture = new ViewFixture())

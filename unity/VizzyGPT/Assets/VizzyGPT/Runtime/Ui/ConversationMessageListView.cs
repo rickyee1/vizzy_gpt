@@ -22,6 +22,7 @@ namespace VizzyGPT.Runtime.Ui
         private readonly TMP_FontAsset? cjkFont;
         private readonly Action showPreview;
         private readonly Func<GameObject, TMP_Text> createTextComponent;
+        private readonly Action<GameObject> destroyObject;
         private readonly Dictionary<string, MessageRow> rows = new Dictionary<string, MessageRow>();
         private readonly HashSet<string> expandedReasoning = new HashSet<string>();
         private readonly HashSet<string> expandedErrors = new HashSet<string>();
@@ -35,7 +36,8 @@ namespace VizzyGPT.Runtime.Ui
             RectTransform composer,
             TMP_FontAsset? cjkFont,
             Action showPreview,
-            Func<GameObject, TMP_Text>? createTextComponent = null)
+            Func<GameObject, TMP_Text>? createTextComponent = null,
+            Action<GameObject>? destroyObject = null)
         {
             this.content = content ?? throw new ArgumentNullException(nameof(content));
             this.scroll = scroll ?? throw new ArgumentNullException(nameof(scroll));
@@ -44,6 +46,7 @@ namespace VizzyGPT.Runtime.Ui
             this.showPreview = showPreview ?? throw new ArgumentNullException(nameof(showPreview));
             this.createTextComponent = createTextComponent ??
                 (gameObject => gameObject.AddComponent<TextMeshProUGUI>());
+            this.destroyObject = destroyObject ?? DestroyObject;
             ConfigureContentLayout();
         }
 
@@ -64,7 +67,7 @@ namespace VizzyGPT.Runtime.Ui
             var activeIds = new HashSet<string>(entries.Select(entry => entry.Id));
             foreach (var staleId in rows.Keys.Where(id => !activeIds.Contains(id)).ToArray())
             {
-                DestroyRow(rows[staleId].Root);
+                DestroyRow(rows[staleId]);
                 rows.Remove(staleId);
                 expandedReasoning.Remove(staleId);
                 expandedErrors.Remove(staleId);
@@ -113,7 +116,7 @@ namespace VizzyGPT.Runtime.Ui
             disposed = true;
             foreach (var row in rows.Values)
             {
-                DestroyRow(row.Root);
+                DestroyRow(row);
             }
 
             rows.Clear();
@@ -400,7 +403,15 @@ namespace VizzyGPT.Runtime.Ui
             }
         }
 
-        private static void DestroyRow(GameObject row)
+        private void DestroyRow(MessageRow row)
+        {
+            row.RemoveListeners();
+            row.Root.SetActive(false);
+            row.Root.transform.SetParent(null, false);
+            destroyObject(row.Root);
+        }
+
+        private static void DestroyObject(GameObject row)
         {
             if (Application.isPlaying)
             {
@@ -463,6 +474,13 @@ namespace VizzyGPT.Runtime.Ui
             public Button PreviewButton { get; }
             public TMP_Text PreviewButtonLabel { get; }
             public TMP_Text[] DynamicTexts { get; }
+
+            public void RemoveListeners()
+            {
+                ReasoningButton.onClick.RemoveAllListeners();
+                ErrorButton.onClick.RemoveAllListeners();
+                PreviewButton.onClick.RemoveAllListeners();
+            }
         }
     }
 }
