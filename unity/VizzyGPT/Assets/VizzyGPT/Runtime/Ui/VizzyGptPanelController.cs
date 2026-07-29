@@ -313,6 +313,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             CancelRequest();
+            FinalizeActiveRequestAsCancelled();
             requestGeneration++;
             if (restoredPendingFingerprint == null)
             {
@@ -373,6 +374,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             CancelRequest();
+            FinalizeActiveRequestAsCancelled();
             var generation = ++requestGeneration;
             session = null;
             pendingConflict = false;
@@ -412,9 +414,21 @@ namespace VizzyGPT.Runtime.Ui
                 }
 
                 var attempt = await RunModifyAttemptAsync(prompt, requestContext, null, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrentRequest(generation, cancellation))
+                {
+                    return;
+                }
+
                 if (attempt.Failure != null && attempt.Failure.IsRepairable)
                 {
                     AdvanceStage(RequestStage.RepairingPatch);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsCurrentRequest(generation, cancellation))
+                    {
+                        return;
+                    }
+
                     var repairContext = BuildRepairContext(attempt.Failure, requestContext.SourceHash!);
                     attempt = await RunModifyAttemptAsync(
                         prompt,
@@ -556,6 +570,7 @@ namespace VizzyGPT.Runtime.Ui
                 return;
             }
 
+            await EnsureConversationLoadedAsync(pending.BaseHash, CancellationToken.None);
             Mode = VizzyGptPanelMode.Modify;
             restoredPendingFingerprint = pending.ProgramFingerprint;
             var rebase = new PendingChangeRebaser().TryRebase(pending, current);
@@ -894,32 +909,12 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             AdvanceStage(RequestStage.ValidatingPatch);
+            PatchResult result;
             try
             {
-                var result = VizzyPatchEngine.Apply(source.SourceDocument, response.Patch);
-                var report = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
-                    .Validate(result.Document, createCatalog());
-                if (!report.IsValid)
-                {
-                    var issue = report.Errors[0];
-                    var safeMessage = SanitizeTechnicalDetails(
-                        issue.Message,
-                        RequestStage.ValidatingPatch);
-                    return ModifyAttemptResult.Failed(
-                        response,
-                        new ModifyValidationFailure(
-                            issue.Code,
-                            issue.Path,
-                            safeMessage,
-                            safeMessage,
-                            true));
-                }
-
-                return ModifyAttemptResult.Succeeded(
-                    response,
-                    ChangeSession.Create(source.SourceDocument, response.Patch, result, report));
+                result = VizzyPatchEngine.Apply(source.SourceDocument, response.Patch);
             }
-            catch (Exception exception)
+            catch (PatchApplyException exception)
             {
                 var diagnostic = ExceptionDiagnostic.From(exception, RequestStage.ValidatingPatch.ToString());
                 var code = diagnostic.DisplayMessage.IndexOf("protected", StringComparison.OrdinalIgnoreCase) >= 0
@@ -937,6 +932,28 @@ namespace VizzyGPT.Runtime.Ui
                         diagnostic.TechnicalDetails,
                         true));
             }
+
+            var report = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
+                .Validate(result.Document, createCatalog());
+            if (!report.IsValid)
+            {
+                var issue = report.Errors[0];
+                var safeMessage = SanitizeTechnicalDetails(
+                    issue.Message,
+                    RequestStage.ValidatingPatch);
+                return ModifyAttemptResult.Failed(
+                    response,
+                    new ModifyValidationFailure(
+                        issue.Code,
+                        issue.Path,
+                        safeMessage,
+                        safeMessage,
+                        true));
+            }
+
+            return ModifyAttemptResult.Succeeded(
+                response,
+                ChangeSession.Create(source.SourceDocument, response.Patch, result, report));
         }
 
         private static string BuildRepairContext(ModifyValidationFailure failure, string originalHash)
@@ -1057,6 +1074,14 @@ namespace VizzyGPT.Runtime.Ui
                 ElapsedSinceRequest(),
                 null,
                 requestStartedUtc));
+        }
+
+        private void FinalizeActiveRequestAsCancelled()
+        {
+            if (activeEntryId != null)
+            {
+                CompleteCancelledEntry();
+            }
         }
 
         private void CompleteActiveStage()

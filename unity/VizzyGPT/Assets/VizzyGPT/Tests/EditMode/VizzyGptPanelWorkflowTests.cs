@@ -256,6 +256,63 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Modify_catalog_infrastructure_failure_does_not_trigger_repair()
+        {
+            var sendCount = 0;
+            var catalogCalls = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    sendCount++;
+                    return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    if (catalogCalls == 2)
+                    {
+                        throw new InvalidOperationException("catalog unavailable");
+                    }
+
+                    return CreateCatalog();
+                });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sendCount, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+            Assert.That(workflow.CurrentRenderState.Entries.Last().Error!.Code,
+                Is.EqualTo(nameof(InvalidOperationException)));
+        }
+
+        [Test]
+        public void Modify_serializer_infrastructure_failure_does_not_trigger_repair()
+        {
+            var sendCount = 0;
+            var adapter = new FakeAdapter(
+                InitialXml,
+                (validationCall, _) => validationCall == 2
+                    ? throw new InvalidOperationException("serializer unavailable")
+                    : null);
+            using var workflow = CreateWorkflow(adapter, (_, __) =>
+            {
+                sendCount++;
+                return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sendCount, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+            Assert.That(adapter.SetCalls, Is.Zero);
+        }
+
+        [Test]
         public void Close_during_request_keeps_panel_closed_when_cancellation_continues()
         {
             using var started = new ManualResetEventSlim();
@@ -270,10 +327,54 @@ namespace VizzyGPT.Tests.EditMode
             var sending = workflow.SendPromptAsync("cancel");
             Assert.That(started.Wait(TimeSpan.FromSeconds(1)), Is.True);
             workflow.ClosePanel();
-            completion.TrySetCanceled();
+            completion.TrySetResult(new AiResponse("Ignored.", null, false, Array.Empty<string>()));
             sending.GetAwaiter().GetResult();
 
             Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Closed));
+            Assert.That(workflow.CurrentRenderState.Entries.Any(entry => entry.CurrentStage.HasValue), Is.False);
+
+            workflow.OpenPanel();
+
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(workflow.CurrentRenderState.Entries.Any(entry => entry.CurrentStage.HasValue), Is.False);
+        }
+
+        [Test]
+        public void Modify_cancellation_at_repair_boundary_prevents_second_transport()
+        {
+            var sendCount = 0;
+            VizzyGptPanelWorkflow? workflow = null;
+            var adapter = new FakeAdapter(
+                InitialXml,
+                (validationCall, _) =>
+                {
+                    if (validationCall != 2)
+                    {
+                        return null;
+                    }
+
+                    workflow!.CancelRequest();
+                    return new ValidationIssue(
+                        ValidationSeverity.Error,
+                        "CatalogPlacement",
+                        "Model patch placement is invalid.",
+                        "/Program[0]/Instructions[0]");
+                });
+            workflow = CreateWorkflow(adapter, (_, __) =>
+            {
+                sendCount++;
+                return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+            });
+            using (workflow)
+            {
+                workflow.OpenPanel();
+                workflow.SetMode(VizzyGptPanelMode.Modify);
+                workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+                Assert.That(sendCount, Is.EqualTo(1));
+                Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+                Assert.That(adapter.SetCalls, Is.Zero);
+            }
         }
 
         [Test]
@@ -530,7 +631,8 @@ namespace VizzyGPT.Tests.EditMode
             Func<string, string, DateTime, CancellationToken, Task>? saveBackupAsync = null,
             Action<VizzyGptPanelRenderState>? render = null,
             Func<DateTime>? utcNow = null,
-            IConversationStore? conversationStore = null)
+            IConversationStore? conversationStore = null,
+            Func<VizzyNodeCatalog>? createCatalog = null)
         {
             return new VizzyGptPanelWorkflow(
                 adapter,
@@ -544,7 +646,7 @@ namespace VizzyGPT.Tests.EditMode
                     "test-key",
                     TimeSpan.FromSeconds(10)),
                 saveBackupAsync ?? ((_, __, ___, ____) => Task.CompletedTask),
-                CreateCatalog,
+                createCatalog ?? CreateCatalog,
                 utcNow ?? (() => new DateTime(2026, 7, 21, 0, 0, 0, DateTimeKind.Utc)),
                 render ?? (_ => { }),
                 conversationStore: conversationStore);
@@ -591,9 +693,15 @@ namespace VizzyGPT.Tests.EditMode
 
         private sealed class FakeAdapter : IVizzyRuntimeAdapter
         {
-            public FakeAdapter(string xml)
+            private readonly Func<int, string, ValidationIssue?>? validate;
+            private int validationCalls;
+
+            public FakeAdapter(
+                string xml,
+                Func<int, string, ValidationIssue?>? validate = null)
             {
                 Xml = xml;
+                this.validate = validate;
             }
 
             public string Xml { get; set; }
@@ -628,7 +736,8 @@ namespace VizzyGPT.Tests.EditMode
 
             public ValidationIssue? ValidateWithProgramSerializer(string xml)
             {
-                return null;
+                validationCalls++;
+                return validate?.Invoke(validationCalls, xml);
             }
         }
     }
