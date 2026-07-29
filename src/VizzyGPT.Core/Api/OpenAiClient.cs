@@ -84,6 +84,19 @@ namespace VizzyGPT.Core.Api
                 return validResponse;
             }
 
+            if (!request.AllowSchemaRepair)
+            {
+                var initialDiagnostic = MakeDisplaySafe(
+                    "Model output was invalid. " + validationError + " Output: " + invalidOutput,
+                    request.ApiKey);
+                return new AiResponse(
+                    "The model response could not be validated.",
+                    patch: null,
+                    canApply: false,
+                    new[] { initialDiagnostic },
+                    firstExtraction.Metadata);
+            }
+
             var repairInput = BuildRepairInput(invalidOutput, validationError);
             var repairResponse = await SendToEndpointAsync(request, endpointMode, repairInput, cancellationToken).ConfigureAwait(false);
             EnsureSuccess(repairResponse, request.ApiKey);
@@ -97,7 +110,7 @@ namespace VizzyGPT.Core.Api
                     patch: null,
                     canApply: false,
                     Array.Empty<string>(),
-                    repairExtraction.Metadata);
+                    WithSchemaRepair(repairExtraction.Metadata));
             }
 
             invalidOutput = repairExtraction.ModelOutput!;
@@ -116,7 +129,7 @@ namespace VizzyGPT.Core.Api
                 patch: null,
                 canApply: false,
                 new[] { diagnostic },
-                repairExtraction.Metadata);
+                repairMetadata);
         }
 
         private async Task<HttpTransportResponse> SendToEndpointAsync(

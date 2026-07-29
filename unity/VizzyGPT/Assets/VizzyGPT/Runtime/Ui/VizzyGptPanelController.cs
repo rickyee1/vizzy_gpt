@@ -431,7 +431,9 @@ namespace VizzyGPT.Runtime.Ui
                     return;
                 }
 
-                if (attempt.Failure != null && attempt.Failure.IsRepairable)
+                if (attempt.Failure != null &&
+                    attempt.Failure.IsRepairable &&
+                    !attempt.Response.Metadata.WasSchemaRepair)
                 {
                     AdvanceStage(RequestStage.RepairingPatch);
                     cancellationToken.ThrowIfCancellationRequested();
@@ -570,25 +572,33 @@ namespace VizzyGPT.Runtime.Ui
                     {
                         messages.Clear();
                         TranscriptText = string.Empty;
-                        RenderState();
-                        return;
                     }
-
-                    await EnsureConversationLoadedWhileLockedAsync(
-                        ResolveConversationProgramHash(),
-                        cancellationToken);
-                    if (conversationHistory == null)
+                    else
                     {
-                        throw new InvalidOperationException("The active conversation is unavailable.");
+                        await EnsureConversationLoadedWhileLockedAsync(
+                            ResolveConversationProgramHash(),
+                            cancellationToken);
+                        if (conversationHistory == null)
+                        {
+                            throw new InvalidOperationException("The active conversation is unavailable.");
+                        }
+
+                        await conversationStore.ClearAsync(
+                            conversationHistory.ConversationId,
+                            cancellationToken);
+                        conversationHistory = new ConversationHistory(
+                            conversationHistory.SchemaVersion,
+                            conversationHistory.ConversationId,
+                            Array.Empty<ConversationMessage>());
                     }
 
-                    await conversationStore.ClearAsync(
-                        conversationHistory.ConversationId,
-                        cancellationToken);
-                    conversationHistory = new ConversationHistory(
-                        conversationHistory.SchemaVersion,
-                        conversationHistory.ConversationId,
-                        Array.Empty<ConversationMessage>());
+                    session = null;
+                    pendingConflict = false;
+                    if (State != VizzyGptPanelState.Closed)
+                    {
+                        State = VizzyGptPanelState.Idle;
+                        StatusText = SecurityElement.Escape("Conversation history cleared.") ?? string.Empty;
+                    }
                     messages.Clear();
                     TranscriptText = string.Empty;
                     activeEntryId = null;
@@ -927,7 +937,21 @@ namespace VizzyGPT.Runtime.Ui
             var context = repairContext == null
                 ? source.AiContext
                 : source.AiContext + "\n\n" + repairContext;
-            var response = await sendAsync(createRequest(prompt, context), cancellationToken);
+            var request = createRequest(prompt, context);
+            if (repairContext != null && request.AllowSchemaRepair)
+            {
+                request = new AiRequest(
+                    request.Mode,
+                    request.Prompt,
+                    request.Context,
+                    request.Model,
+                    request.BaseUri,
+                    request.ApiKey,
+                    request.Timeout,
+                    allowSchemaRepair: false);
+            }
+
+            var response = await sendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             AdvanceStage(RequestStage.ParsingPatch);
 

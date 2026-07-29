@@ -282,6 +282,37 @@ namespace VizzyGPT.Core.Tests.Conversations
         }
 
         [Test]
+        public async Task Embedded_program_xml_and_patch_payloads_are_redacted()
+        {
+            using var temporary = new TemporaryDirectory();
+            var store = new FileConversationStore(temporary.Path);
+            var history = await store.LoadOrCreateAsync("program-embedded-sensitive");
+
+            await store.SaveAsync(
+                new ConversationHistory(
+                    1,
+                    history.ConversationId,
+                    new[]
+                    {
+                        CreateMessage(
+                            id: "embedded-program",
+                            text: "Program follows:\n<Program><Variables /></Program>\nDone."),
+                        CreateMessage(
+                            id: "fenced-patch",
+                            text: "Patch follows:\n```json\n{\"operations\":[{\"op\":\"remove\"}]}\n```")
+                    }));
+
+            var loaded = await store.LoadOrCreateAsync("program-embedded-sensitive");
+
+            Assert.That(
+                loaded.Messages.Single(message => message.Id == "embedded-program").Text,
+                Is.EqualTo("[redacted program XML]"));
+            Assert.That(
+                loaded.Messages.Single(message => message.Id == "fenced-patch").Text,
+                Is.EqualTo("[redacted patch payload]"));
+        }
+
+        [Test]
         public async Task Malformed_index_fails_open_without_modifying_the_bad_file()
         {
             using var temporary = new TemporaryDirectory();

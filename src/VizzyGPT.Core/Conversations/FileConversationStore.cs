@@ -383,12 +383,12 @@ namespace VizzyGPT.Core.Conversations
 
         private static string SanitizePersistedText(string value)
         {
-            if (IsCompleteProgramXml(value))
+            if (IsCompleteProgramXml(value) || ContainsEmbeddedProgramXml(value))
             {
                 return "[redacted program XML]";
             }
 
-            if (IsPatchOperationsPayload(value))
+            if (IsPatchOperationsPayload(value) || ContainsEmbeddedPatchOperationsPayload(value))
             {
                 return "[redacted patch payload]";
             }
@@ -420,6 +420,37 @@ namespace VizzyGPT.Core.Conversations
             }
         }
 
+        private static bool ContainsEmbeddedProgramXml(string value)
+        {
+            const string opening = "<Program";
+            const string closing = "</Program>";
+            var searchStart = 0;
+            while (searchStart < value.Length)
+            {
+                var start = value.IndexOf(opening, searchStart, StringComparison.Ordinal);
+                if (start < 0)
+                {
+                    return false;
+                }
+
+                var end = value.IndexOf(closing, start + opening.Length, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    return false;
+                }
+
+                var candidate = value.Substring(start, end + closing.Length - start);
+                if (IsCompleteProgramXml(candidate))
+                {
+                    return true;
+                }
+
+                searchStart = start + opening.Length;
+            }
+
+            return false;
+        }
+
         private static bool IsPatchOperationsPayload(string value)
         {
             try
@@ -430,6 +461,33 @@ namespace VizzyGPT.Core.Conversations
             {
                 return false;
             }
+        }
+
+        private static bool ContainsEmbeddedPatchOperationsPayload(string value)
+        {
+            for (var index = 0; index < value.Length; index++)
+            {
+                if (value[index] != '{' && value[index] != '[')
+                {
+                    continue;
+                }
+
+                try
+                {
+                    using var stringReader = new StringReader(value.Substring(index));
+                    using var jsonReader = new JsonTextReader(stringReader);
+                    if (ContainsOperationsProperty(JToken.ReadFrom(jsonReader)))
+                    {
+                        return true;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Continue scanning in case a later JSON value is the patch payload.
+                }
+            }
+
+            return false;
         }
 
         private static bool ContainsOperationsProperty(JToken token)

@@ -11,7 +11,8 @@ namespace VizzyGPT.Core.Api
             string model,
             Uri baseUri,
             string apiKey,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            bool allowSchemaRepair = true)
         {
             if (!Enum.IsDefined(typeof(ApiMode), mode))
             {
@@ -30,6 +31,7 @@ namespace VizzyGPT.Core.Api
 
             Mode = mode;
             Timeout = timeout;
+            AllowSchemaRepair = allowSchemaRepair;
         }
 
         public ApiMode Mode { get; }
@@ -45,6 +47,8 @@ namespace VizzyGPT.Core.Api
         public string ApiKey { get; }
 
         public TimeSpan Timeout { get; }
+
+        public bool AllowSchemaRepair { get; }
 
         private static Uri NormalizeBaseUri(Uri baseUri)
         {

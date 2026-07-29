@@ -103,6 +103,48 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Clear_history_discards_a_ready_modify_preview()
+        {
+            var store = new FakeConversationStore(
+                new ConversationHistory(1, "conversation-a", Array.Empty<ConversationMessage>()));
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                ValidModifyResponse(InitialXml),
+                store);
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+            Assert.That(workflow.CanApply, Is.True);
+
+            workflow.ClearConversationAsync().GetAwaiter().GetResult();
+
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(workflow.CanApply, Is.False);
+            Assert.That(workflow.ShowPreview(), Is.Null);
+            Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
+        }
+
+        [Test]
+        public void Clear_history_without_a_store_discards_a_ready_modify_preview()
+        {
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                ValidModifyResponse(InitialXml),
+                store: null);
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+            Assert.That(workflow.CanApply, Is.True);
+
+            workflow.ClearConversationAsync().GetAwaiter().GetResult();
+
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+            Assert.That(workflow.CanApply, Is.False);
+            Assert.That(workflow.ShowPreview(), Is.Null);
+            Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
+        }
+
+        [Test]
         public void Clear_history_rejects_while_request_is_sending_without_mutating_history()
         {
             var old = Message("old", ConversationRole.Assistant, "Earlier response.");
@@ -441,7 +483,7 @@ namespace VizzyGPT.Tests.EditMode
         private static VizzyGptPanelWorkflow CreateWorkflow(
             FakeAdapter adapter,
             Func<AiRequest, CancellationToken, Task<AiResponse>> send,
-            IConversationStore store,
+            IConversationStore? store,
             Action<VizzyGptPanelRenderState>? render = null)
         {
             return new VizzyGptPanelWorkflow(

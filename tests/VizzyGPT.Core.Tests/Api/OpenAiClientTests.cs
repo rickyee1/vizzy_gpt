@@ -823,6 +823,40 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(displayText, Does.Not.Contain("bearer-secret-one"));
             Assert.That(displayText, Does.Not.Contain("json-secret"));
             Assert.That(result.Diagnostics.All(IsDisplaySafeSingleLine), Is.True);
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
+        [Test]
+        public async Task Repair_refusal_marks_the_schema_repair_as_consumed()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
+            transport.Enqueue(Response(200, RefusalBody("I cannot repair that response.")));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(result.Message, Is.EqualTo("I cannot repair that response."));
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Patch, Is.Null);
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
+        [Test]
+        public async Task Disabled_schema_repair_returns_after_the_first_invalid_output()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ResponsesBody("not-json-output")));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses, allowSchemaRepair: false),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Patch, Is.Null);
         }
 
         [Test]
@@ -929,7 +963,10 @@ namespace VizzyGPT.Core.Tests.Api
                 TimeSpan.FromSeconds(1)));
         }
 
-        private static AiRequest Request(ApiMode mode, Uri? baseUri = null)
+        private static AiRequest Request(
+            ApiMode mode,
+            Uri? baseUri = null,
+            bool allowSchemaRepair = true)
         {
             return new AiRequest(
                 mode,
@@ -938,7 +975,8 @@ namespace VizzyGPT.Core.Tests.Api
                 "gpt-test",
                 baseUri ?? new Uri("https://api.example.test/openai/"),
                 ApiKey,
-                TimeSpan.FromSeconds(17));
+                TimeSpan.FromSeconds(17),
+                allowSchemaRepair);
         }
 
         private static void AssertStrictEnvelopeSchema(JObject schema)

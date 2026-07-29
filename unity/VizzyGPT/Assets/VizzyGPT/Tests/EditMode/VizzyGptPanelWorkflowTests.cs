@@ -71,6 +71,50 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Modify_does_not_retry_after_client_schema_repair_is_exhausted()
+        {
+            var sendCount = 0;
+            using var workflow = CreateWorkflow(new FakeAdapter(InitialXml), (_, __) =>
+            {
+                sendCount++;
+                return Task.FromResult(new AiResponse(
+                    "The model response could not be validated.",
+                    null,
+                    false,
+                    new[] { "Invalid patch envelope." },
+                    new AiResponseMetadata(null, null, null, true)));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sendCount, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+        }
+
+        [Test]
+        public void Modify_disables_client_schema_repair_on_the_workflow_repair_request()
+        {
+            var requests = new List<AiRequest>();
+            using var workflow = CreateWorkflow(new FakeAdapter(InitialXml), (request, _) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(requests.Count == 1
+                    ? CreateProtectedRootResponse(InitialXml, "invalid")
+                    : CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[0].AllowSchemaRepair, Is.True);
+            Assert.That(requests[1].AllowSchemaRepair, Is.False);
+        }
+
+        [Test]
         public void Modify_records_ordered_stages_and_provider_reasoning()
         {
             var now = new DateTime(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
