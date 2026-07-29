@@ -28,6 +28,10 @@ namespace VizzyGPT.Core.Api
     {
         private const string EnvelopeName = "vizzy_patch_envelope";
         private const int MaximumDiagnosticLength = 512;
+        private const string ModelInstruction =
+            "Return only a JSON object matching the supplied Vizzy patch envelope schema. " +
+            "Never add, remove, replace, or move the direct Program containers Variables, " +
+            "Instructions, or Expressions. Modify only their permitted descendants.";
 
         private readonly IAiTransport transport;
 
@@ -155,7 +159,7 @@ namespace VizzyGPT.Core.Api
             return new JObject
             {
                 ["model"] = model,
-                ["input"] = input,
+                ["input"] = ModelInstruction + "\n\n" + input,
                 ["text"] = new JObject
                 {
                     ["format"] = CreateSchemaFormat()
@@ -173,7 +177,7 @@ namespace VizzyGPT.Core.Api
                     new JObject
                     {
                         ["role"] = "system",
-                        ["content"] = "Return only a JSON object matching the supplied Vizzy patch envelope schema."
+                        ["content"] = ModelInstruction
                     },
                     new JObject
                     {

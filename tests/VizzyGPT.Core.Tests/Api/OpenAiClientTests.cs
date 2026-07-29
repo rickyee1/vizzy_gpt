@@ -17,6 +17,25 @@ namespace VizzyGPT.Core.Tests.Api
     {
         private const string ApiKey = "sk-task5-secret";
         private const string BaseHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        private const string ProtectedRootInstruction =
+            "Never add, remove, replace, or move the direct Program containers Variables, " +
+            "Instructions, or Expressions. Modify only their permitted descendants.";
+
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Endpoint_system_instruction_protects_direct_program_containers(ApiMode mode)
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, ValidEnvelope("Protected roots"))));
+
+            await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            var payload = ParseBody(transport.Requests.Single());
+            var instruction = mode == ApiMode.Responses
+                ? (string?)payload["input"]
+                : (string?)((JArray)payload["messages"]!)[0]!["content"];
+            Assert.That(instruction, Does.Contain(ProtectedRootInstruction));
+        }
 
         [Test]
         public async Task Responses_posts_strict_schema_request_and_normalizes_standard_output()

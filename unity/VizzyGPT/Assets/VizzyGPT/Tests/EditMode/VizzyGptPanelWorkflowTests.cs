@@ -208,6 +208,28 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Modify_rejects_an_invalid_source_program_before_transport()
+        {
+            var sendCalls = 0;
+            var invalidSource = "<Program><Variables /><Expressions /></Program>";
+            var adapter = new FakeAdapter(invalidSource);
+            using var workflow = CreateWorkflow(adapter, (_, __) =>
+            {
+                sendCalls++;
+                return Task.FromResult(CreateValidModifyResponseValue(invalidSource));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sendCalls, Is.EqualTo(0));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
+            Assert.That(workflow.StatusText, Does.Contain("Current Vizzy program is not safe to modify"));
+            Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
         public void Modify_rejects_response_when_editor_changed_while_request_was_pending()
         {
             using var requestStarted = new ManualResetEventSlim();

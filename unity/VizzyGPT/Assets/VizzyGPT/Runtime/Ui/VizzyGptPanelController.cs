@@ -656,6 +656,14 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var document = VizzyProgramDocument.Parse(xml);
+            var sourceReport = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
+                .Validate(document, createCatalog());
+            if (!sourceReport.IsValid)
+            {
+                throw new InvalidOperationException(
+                    "Current Vizzy program is not safe to modify: " + sourceReport.Errors[0].Message);
+            }
+
             var baseHash = VizzyProgramHash.Compute(document);
             return new RequestContext(
                 "Program base hash:\n" + baseHash + "\n" +
