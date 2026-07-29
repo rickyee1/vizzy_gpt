@@ -569,6 +569,7 @@ namespace VizzyGPT.Runtime.Ui
                     if (conversationStore == null)
                     {
                         messages.Clear();
+                        TranscriptText = string.Empty;
                         RenderState();
                         return;
                     }
@@ -589,6 +590,7 @@ namespace VizzyGPT.Runtime.Ui
                         conversationHistory.ConversationId,
                         Array.Empty<ConversationMessage>());
                     messages.Clear();
+                    TranscriptText = string.Empty;
                     activeEntryId = null;
                     activeStages.Clear();
                     activeStage = null;

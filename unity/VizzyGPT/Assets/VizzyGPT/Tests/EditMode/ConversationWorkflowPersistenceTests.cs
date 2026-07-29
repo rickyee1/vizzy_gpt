@@ -64,6 +64,45 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Clear_history_resets_legacy_transcript_before_the_next_send()
+        {
+            var store = new FakeConversationStore(
+                new ConversationHistory(1, "conversation-a", Array.Empty<ConversationMessage>()));
+            var transportCalls = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (_, __) =>
+                {
+                    transportCalls++;
+                    var message = transportCalls == 1 ? "Old response." : "New response.";
+                    return Task.FromResult(new AiResponse(
+                        message,
+                        null,
+                        false,
+                        Array.Empty<string>()));
+                },
+                store);
+            workflow.OpenPanel();
+            workflow.SendPromptAsync("Old prompt.").GetAwaiter().GetResult();
+            Assert.That(workflow.CurrentRenderState.TranscriptText, Does.Contain("Old response."));
+
+            workflow.ClearConversationAsync().GetAwaiter().GetResult();
+
+            Assert.That(workflow.TranscriptText, Is.Empty);
+            Assert.That(workflow.CurrentRenderState.TranscriptText, Is.Empty);
+            Assert.That(workflow.CurrentRenderState.Entries, Is.Empty);
+
+            workflow.SendPromptAsync("New prompt.").GetAwaiter().GetResult();
+
+            Assert.That(transportCalls, Is.EqualTo(2));
+            Assert.That(workflow.TranscriptText, Is.EqualTo("New response."));
+            Assert.That(workflow.CurrentRenderState.TranscriptText, Is.EqualTo("New response."));
+            Assert.That(workflow.CurrentRenderState.TranscriptText, Does.Not.Contain("Old response."));
+            Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                Is.EqualTo(new[] { "New prompt.", "New response." }));
+        }
+
+        [Test]
         public void Clear_history_rejects_while_request_is_sending_without_mutating_history()
         {
             var old = Message("old", ConversationRole.Assistant, "Earlier response.");
