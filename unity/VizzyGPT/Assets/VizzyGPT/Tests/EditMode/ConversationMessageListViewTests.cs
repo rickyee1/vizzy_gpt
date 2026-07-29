@@ -174,6 +174,62 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Render_resets_follow_after_manual_scroll_content_shrinks_then_regrows()
+        {
+            using (var fixture = new ViewFixture())
+            {
+                fixture.View = new ConversationMessageListView(
+                    fixture.Content,
+                    fixture.Scroll,
+                    fixture.Composer,
+                    fixture.Font,
+                    () => { },
+                    gameObject => gameObject.AddComponent<TestTmpText>());
+                var overflowingEntries = new[]
+                {
+                    Entry("user-1", ConversationRole.User, "one"),
+                    Entry("assistant-1", ConversationRole.Assistant, "two"),
+                    Entry("user-2", ConversationRole.User, "three"),
+                    Entry("assistant-2", ConversationRole.Assistant, "four"),
+                    Entry("user-3", ConversationRole.User, "five"),
+                    Entry("assistant-3", ConversationRole.Assistant, "six")
+                };
+
+                fixture.View.Render(overflowingEntries);
+                Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
+                fixture.Scroll.verticalNormalizedPosition = 0.65f;
+                fixture.Scroll.Rebuild(CanvasUpdate.PostLayout);
+                var manualPosition = fixture.Scroll.verticalNormalizedPosition;
+
+                fixture.View.Render(overflowingEntries.Concat(new[]
+                {
+                    Entry("user-4", ConversationRole.User, "seven")
+                }).ToArray());
+
+                Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
+                Assert.That(fixture.Scroll.verticalNormalizedPosition, Is.EqualTo(manualPosition).Within(0.001f));
+
+                fixture.View.Render(new[]
+                {
+                    Entry("user-1", ConversationRole.User, "one")
+                });
+
+                Assert.That(fixture.Content.rect.height, Is.LessThanOrEqualTo(fixture.Scroll.viewport.rect.height));
+                fixture.Content.anchoredPosition = new Vector2(0f, -100f);
+                fixture.Scroll.Rebuild(CanvasUpdate.PostLayout);
+                Assert.That(
+                    fixture.Scroll.verticalNormalizedPosition,
+                    Is.GreaterThan(0.95f),
+                    "The regrowth must start from Unity's ambiguous non-scrollable top value.");
+
+                fixture.View.Render(overflowingEntries);
+
+                Assert.That(fixture.Content.rect.height, Is.GreaterThan(fixture.Scroll.viewport.rect.height));
+                Assert.That(fixture.Scroll.verticalNormalizedPosition, Is.Zero);
+            }
+        }
+
+        [Test]
         public void Disclosure_and_preview_labels_remain_single_line_inside_narrow_buttons()
         {
             using (var fixture = new ViewFixture())

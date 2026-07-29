@@ -86,6 +86,11 @@ namespace VizzyGPT.Runtime.Ui
             Canvas.ForceUpdateCanvases();
             LayoutRebuilder.ForceRebuildLayoutImmediate(content);
             Canvas.ForceUpdateCanvases();
+            if (!IsScrollable())
+            {
+                followBottom = true;
+            }
+
             scroll.verticalNormalizedPosition = followBottom ? 0f : preserveScrollPosition;
             hasRendered = true;
         }
