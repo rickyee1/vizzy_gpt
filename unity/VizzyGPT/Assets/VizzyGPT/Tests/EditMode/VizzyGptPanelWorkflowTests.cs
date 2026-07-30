@@ -211,12 +211,20 @@ namespace VizzyGPT.Tests.EditMode
         public void Editor_ask_includes_the_active_program_without_enabling_mutation()
         {
             AiRequest? sentRequest = null;
+            var catalogCalls = 0;
             var adapter = new FakeAdapter(InitialXml);
-            using var workflow = CreateWorkflow(adapter, (request, _) =>
-            {
-                sentRequest = request;
-                return Task.FromResult(new AiResponse("Explanation.", null, false, Array.Empty<string>()));
-            });
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    sentRequest = request;
+                    return Task.FromResult(new AiResponse("Explanation.", null, false, Array.Empty<string>()));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
 
             workflow.OpenPanel();
             workflow.SendPromptAsync("Explain this program.").GetAwaiter().GetResult();
@@ -225,6 +233,8 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(sentRequest!.Purpose, Is.EqualTo(AiRequestPurpose.Ask));
             Assert.That(sentRequest.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
             Assert.That(sentRequest.Context, Does.Contain("Ask mode does not permit program mutation."));
+            Assert.That(sentRequest.Context, Does.Not.Contain("CURRENT VIZZY NODE TEMPLATES"));
+            Assert.That(catalogCalls, Is.Zero);
             Assert.That(workflow.CanApply, Is.False);
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
         }
@@ -320,7 +330,7 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
-        public void Modify_catalog_infrastructure_failure_does_not_trigger_repair()
+        public void Modify_reuses_the_captured_catalog_during_validation()
         {
             var sendCount = 0;
             var catalogCalls = 0;
@@ -347,9 +357,8 @@ namespace VizzyGPT.Tests.EditMode
             workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
 
             Assert.That(sendCount, Is.EqualTo(1));
-            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
-            Assert.That(workflow.CurrentRenderState.Entries.Last().Error!.Code,
-                Is.EqualTo(nameof(InvalidOperationException)));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
         }
 
         [Test]
@@ -520,6 +529,70 @@ namespace VizzyGPT.Tests.EditMode
             var expectedHash = VizzyProgramHash.Compute(VizzyProgramDocument.Parse(InitialXml));
             Assert.That(sentRequest, Is.Not.Null);
             Assert.That(sentRequest!.Context, Does.Contain("Program base hash:\n" + expectedHash));
+        }
+
+        [Test]
+        public void Modify_includes_the_captured_catalog_model_skill_reference()
+        {
+            var requests = new List<AiRequest>();
+            var catalogCalls = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(1));
+            Assert.That(requests[0].Context, Does.Contain("VIZZY MODEL SKILL"));
+            Assert.That(requests[0].Context, Does.Contain("style=\"set-input\""));
+            Assert.That(requests[0].Context, Does.Contain("input=\"throttle\""));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Modify_repair_includes_matching_templates_from_the_captured_catalog()
+        {
+            var requests = new List<AiRequest>();
+            var catalogCalls = 0;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(requests.Count == 1
+                        ? CreateUnknownStyleResponse(InitialXml)
+                        : CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].Context, Does.Contain("Error code: UnknownStyle"));
+            Assert.That(requests[1].Context, Does.Contain("SetInput"));
+            Assert.That(requests[1].Context, Does.Contain("style=\"set-input\""));
+            Assert.That(requests[1].Context, Does.Contain("input=\"throttle\""));
+            Assert.That(requests[1].Context, Does.Not.Contain("<Style"));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+            Assert.That(adapter.SetCalls, Is.Zero);
         }
 
         [Test]
@@ -749,10 +822,50 @@ namespace VizzyGPT.Tests.EditMode
             return new AiResponse(marker, patch, true, Array.Empty<string>());
         }
 
+        private static AiResponse CreateUnknownStyleResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Insert invalid throttle control",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]/Instructions[0]"),
+                        node: new NodeSpec(
+                            "SetThrottle",
+                            new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["style"] = "set-throttle"
+                            },
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Constant",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["number"] = "0"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Invalid throttle preview.", patch, true, Array.Empty<string>());
+        }
+
         private static VizzyNodeCatalog CreateCatalog()
         {
             return VizzyNodeCatalog.FromToolboxXml(
                 "<VizzyToolbox><Instructions><Log /></Instructions><Expressions /></VizzyToolbox>");
+        }
+
+        private static VizzyNodeCatalog CreateThrottleCatalog()
+        {
+            return VizzyNodeCatalog.FromToolboxXml(
+                "<VizzyToolbox><Styles><Style id='set-input' color='CraftInstruction' /></Styles>" +
+                "<Categories><Category name='Craft Instructions'>" +
+                "<SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput>" +
+                "</Category></Categories></VizzyToolbox>");
         }
 
         private sealed class FakeAdapter : IVizzyRuntimeAdapter

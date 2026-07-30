@@ -446,7 +446,10 @@ namespace VizzyGPT.Runtime.Ui
                         return;
                     }
 
-                    var repairContext = BuildRepairContext(attempt.Failure, requestContext.SourceHash!);
+                    var repairContext = BuildRepairContext(
+                        attempt.Failure,
+                        requestContext.SourceHash!,
+                        requestContext.NodeCatalog!);
                     attempt = await RunModifyAttemptAsync(
                         prompt,
                         requestContext,
@@ -877,6 +880,7 @@ namespace VizzyGPT.Runtime.Ui
                     VizzyGptPanelMode.Ask,
                     null,
                     null,
+                    null,
                     null);
             }
 
@@ -889,8 +893,9 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var document = VizzyProgramDocument.Parse(xml);
+            var catalog = createCatalog();
             var sourceReport = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
-                .Validate(document, createCatalog());
+                .Validate(document, catalog);
             if (!sourceReport.IsValid)
             {
                 throw new InvalidOperationException(
@@ -898,14 +903,17 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var baseHash = VizzyProgramHash.Compute(document);
+            var skillReference = VizzyModelSkill.BuildModifyReference(catalog);
             return new RequestContext(
                 "Program base hash:\n" + baseHash + "\n" +
                 new ContextBuilder().BuildEditorContext(document, string.Empty, null) +
-                (environment.IsFlight ? "\n" + environment.BuildFlightContext() : string.Empty),
+                (environment.IsFlight ? "\n" + environment.BuildFlightContext() : string.Empty) +
+                "\n" + skillReference,
                 VizzyGptPanelMode.Modify,
                 xml,
                 document,
-                baseHash);
+                baseHash,
+                catalog);
         }
 
         private string BuildReadOnlyProgramContext()
@@ -937,6 +945,19 @@ namespace VizzyGPT.Runtime.Ui
             string? repairContext,
             CancellationToken cancellationToken)
         {
+            var catalog = source.NodeCatalog;
+            if (catalog == null)
+            {
+                return ModifyAttemptResult.Failed(
+                    new AiResponse(string.Empty, null, false, Array.Empty<string>()),
+                    new ModifyValidationFailure(
+                        "MissingCatalog",
+                        null,
+                        "Modify mode did not capture a Vizzy node catalog.",
+                        "The captured Modify catalog was null.",
+                        false));
+            }
+
             AdvanceStage(RequestStage.WaitingForModel);
             var context = repairContext == null
                 ? source.AiContext
@@ -1031,7 +1052,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             var report = new VizzyProgramValidator(adapter.ValidateWithProgramSerializer)
-                .Validate(result.Document, createCatalog());
+                .Validate(result.Document, catalog);
             if (!report.IsValid)
             {
                 var issue = report.Errors[0];
@@ -1053,7 +1074,10 @@ namespace VizzyGPT.Runtime.Ui
                 ChangeSession.Create(source.SourceDocument, response.Patch, result, report));
         }
 
-        private static string BuildRepairContext(ModifyValidationFailure failure, string originalHash)
+        private static string BuildRepairContext(
+            ModifyValidationFailure failure,
+            string originalHash,
+            VizzyNodeCatalog catalog)
         {
             return "MODIFY REPAIR\n" +
                 "The previous patch could not be safely previewed.\n" +
@@ -1061,7 +1085,8 @@ namespace VizzyGPT.Runtime.Ui
                 "Path: " + (failure.Path ?? "root") + "\n" +
                 "Error: " + SanitizeTechnicalDetails(failure.Message, RequestStage.RepairingPatch) + "\n" +
                 "Return a complete replacement patch against original base hash " + originalHash + ".\n" +
-                "Do not add, remove, replace, or move direct Program structural containers.";
+                "Do not add, remove, replace, or move direct Program structural containers.\n\n" +
+                VizzyModelSkill.BuildRepairReference(catalog, failure.Code, failure.Path, failure.Message);
         }
 
         private static string SanitizeTechnicalDetails(string value, RequestStage stage)
@@ -1581,13 +1606,15 @@ namespace VizzyGPT.Runtime.Ui
                 VizzyGptPanelMode mode,
                 string? sourceXml,
                 VizzyProgramDocument? sourceDocument,
-                string? sourceHash)
+                string? sourceHash,
+                VizzyNodeCatalog? nodeCatalog)
             {
                 AiContext = aiContext ?? throw new ArgumentNullException(nameof(aiContext));
                 Mode = mode;
                 SourceXml = sourceXml;
                 SourceDocument = sourceDocument;
                 SourceHash = sourceHash;
+                NodeCatalog = nodeCatalog;
             }
 
             public string AiContext { get; }
@@ -1600,6 +1627,8 @@ namespace VizzyGPT.Runtime.Ui
             public VizzyProgramDocument? SourceDocument { get; }
 
             public string? SourceHash { get; }
+
+            public VizzyNodeCatalog? NodeCatalog { get; }
         }
 
         private void ThrowIfDisposed()
