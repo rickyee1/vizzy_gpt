@@ -2,11 +2,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
+using VizzyGPT.Core.Conversations;
 using VizzyGPT.Core.Patching;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Validation;
@@ -160,6 +163,62 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Editor_restore_loads_pending_base_history_and_links_result_continuity()
+        {
+            Task.Run(async () =>
+            {
+                var root = Path.Combine(Path.GetTempPath(), "VizzyGPT-PendingConversation-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var store = new FileConversationStore(root);
+                    var general = await store.LoadOrCreateAsync(null);
+                    await store.SaveAsync(HistoryWith(general, "general-message", "General history."));
+
+                    var baseHash = Hash(BaseXml);
+                    var program = await store.LoadOrCreateAsync(baseHash);
+                    await store.SaveAsync(HistoryWith(program, "pending-message", "Pending base history."));
+
+                    var pending = CreatePending(BaseXml, AddVariablePatch(BaseXml), "craft-alpha");
+                    var adapter = new FakeAdapter(BaseXml, true, false);
+                    using var workflow = CreateWorkflow(
+                        adapter,
+                        EditorEnvironment(
+                            (_, __) => Task.FromResult<PendingChange?>(pending),
+                            (_, __) => Task.CompletedTask),
+                        (_, __) => throw new AssertionException("No request expected."),
+                        store);
+
+                    await workflow.LoadConversationAsync();
+                    Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                        Does.Contain("General history."));
+
+                    workflow.OpenPanel();
+                    await workflow.RestorePendingAsync();
+
+                    Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                        Does.Contain("Pending base history."));
+                    Assert.That(workflow.CurrentRenderState.Entries.Select(entry => entry.Text),
+                        Does.Not.Contain("General history."));
+                    Assert.That(await workflow.ApplySessionAsync(), Is.True);
+                    Assert.That(adapter.SetCalls, Is.EqualTo(1));
+
+                    var resultHash = Hash(adapter.Xml);
+                    var linked = await new FileConversationStore(root).LoadOrCreateAsync(resultHash);
+                    Assert.That(linked.ConversationId, Is.EqualTo(program.ConversationId));
+                    Assert.That(linked.Messages.Select(message => message.Text),
+                        Does.Contain("Pending base history."));
+                }
+                finally
+                {
+                    if (Directory.Exists(root))
+                    {
+                        Directory.Delete(root, true);
+                    }
+                }
+            }).GetAwaiter().GetResult();
+        }
+
+        [Test]
         public void Editor_restore_deletes_the_loaded_pending_records_original_fingerprint()
         {
             var pending = CreatePending(BaseXml, AddVariablePatch(BaseXml), "program-flight-hash");
@@ -221,7 +280,8 @@ namespace VizzyGPT.Tests.EditMode
         private static VizzyGptPanelWorkflow CreateWorkflow(
             FakeAdapter adapter,
             VizzyGptWorkflowEnvironment environment,
-            Func<AiRequest, CancellationToken, Task<AiResponse>> send)
+            Func<AiRequest, CancellationToken, Task<AiResponse>> send,
+            IConversationStore? conversationStore = null)
         {
             return new VizzyGptPanelWorkflow(
                 adapter,
@@ -239,7 +299,32 @@ namespace VizzyGPT.Tests.EditMode
                     "<VizzyToolbox><Instructions><Log /></Instructions><Expressions /></VizzyToolbox>"),
                 () => Now,
                 _ => { },
-                environment);
+                environment,
+                conversationStore: conversationStore);
+        }
+
+        private static ConversationHistory HistoryWith(
+            ConversationHistory history,
+            string id,
+            string text)
+        {
+            return new ConversationHistory(
+                history.SchemaVersion,
+                history.ConversationId,
+                new[]
+                {
+                    new ConversationMessage(
+                        id,
+                        ConversationRole.Assistant,
+                        ConversationMessageKind.Message,
+                        ConversationMode.Modify,
+                        text,
+                        null,
+                        Array.Empty<ConversationStageTiming>(),
+                        null,
+                        null,
+                        Now)
+                });
         }
 
         private static VizzyGptWorkflowEnvironment FlightEnvironment(

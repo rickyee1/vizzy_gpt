@@ -10,6 +10,7 @@ using TMPro;
 using UnityEngine;
 using VizzyGPT.Core.Api;
 using VizzyGPT.Core.Changes;
+using VizzyGPT.Core.Conversations;
 using VizzyGPT.Core.Programs;
 using VizzyGPT.Core.Storage;
 using VizzyGPT.Runtime.Adapters;
@@ -156,6 +157,9 @@ namespace VizzyGPT.Runtime
             var activeStore = RequireStore();
             var adapter = new VizzyRuntimeAdapter();
             var environment = CreateWorkflowEnvironment(adapter, activeStore);
+            var conversationStore = new FileConversationStore(
+                JunoDataPaths.Root,
+                warning => Debug.LogWarning(warning));
             var workflow = new VizzyGptPanelWorkflow(
                 adapter,
                 (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken),
@@ -168,7 +172,8 @@ namespace VizzyGPT.Runtime
                 environment,
                 environment.IsFlight
                     ? RuntimeCompatibilityResult.Compatible("Flight.Craft.FlightProgram")
-                    : adapter.Compatibility);
+                    : adapter.Compatibility,
+                conversationStore);
             panel.Configure(workflow, OpenSettingsDialog, OpenPreviewDialog);
             cjkFont = cjkFontProvider?.Resolve();
             panel.Bind(layoutController.XmlLayout, cjkFont);
@@ -357,7 +362,8 @@ namespace VizzyGPT.Runtime
                 RequireStore(),
                 DpapiSecretProtector.Protect,
                 DpapiSecretProtector.Unprotect,
-                (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken));
+                (request, cancellationToken) => RequireOpenAiClient().SendAsync(request, cancellationToken),
+                cancellationToken => RequirePanelWorkflow().ClearConversationAsync(cancellationToken));
         }
 
         private async void LoadSavedSettingsAsync()

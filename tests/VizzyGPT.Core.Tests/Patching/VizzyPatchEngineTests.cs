@@ -697,7 +697,81 @@ namespace VizzyGPT.Core.Tests.Patching
         [TestCaseSource(nameof(ProtectedStructuralRootCases))]
         public void Apply_rejects_protected_structural_roots(string operationJson)
         {
-            AssertApplyRejectedWithoutMutation(Minimal(), JObject.Parse(operationJson));
+            var document = Minimal();
+            var originalXml = document.ToXml();
+
+            var exception = Assert.Throws<PatchApplyException>(
+                () => VizzyPatchEngine.Apply(document, PatchFor(document, JObject.Parse(operationJson))));
+
+            Assert.That(exception!.Message, Does.Contain("protected structural root"));
+            Assert.That(document.ToXml(), Is.EqualTo(originalXml));
+        }
+
+        [Test]
+        public void Apply_rejects_a_top_level_protected_replacement_node_before_catalog_validation()
+        {
+            var document = Minimal();
+            var originalXml = document.ToXml();
+
+            var exception = Assert.Throws<PatchApplyException>(() => VizzyPatchEngine.Apply(
+                document,
+                PatchFor(
+                    document,
+                    Op("replaceNode", "target", Id(0), "node", Spec("Variables")))));
+
+            Assert.That(exception!.Message, Does.Contain("protected structural root"));
+            Assert.That(document.ToXml(), Is.EqualTo(originalXml));
+        }
+
+        [TestCase("insertBefore")]
+        [TestCase("insertAfter")]
+        [TestCase("insertChild")]
+        public void Apply_rejects_top_level_protected_insertion_nodes(string operationType)
+        {
+            var document = Minimal();
+            var target = operationType == "insertChild"
+                ? Path("/Program[0]/Instructions[0]")
+                : Id(0);
+            var originalXml = document.ToXml();
+
+            var exception = Assert.Throws<PatchApplyException>(() => VizzyPatchEngine.Apply(
+                document,
+                PatchFor(
+                    document,
+                    Op(operationType, "target", target, "node", Spec("Instructions")))));
+
+            Assert.That(exception!.Message, Does.Contain("protected structural root"));
+            Assert.That(document.ToXml(), Is.EqualTo(originalXml));
+        }
+
+        [Test]
+        public void Apply_allows_nested_instructions_in_an_editable_node_spec()
+        {
+            var document = Minimal();
+            var nestedInstructions = new JObject
+            {
+                ["element"] = "While",
+                ["attributes"] = new JObject { ["id"] = "1" },
+                ["children"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["element"] = "Instructions",
+                        ["attributes"] = new JObject(),
+                        ["children"] = new JArray()
+                    }
+                }
+            };
+
+            var result = VizzyPatchEngine.Apply(
+                document,
+                PatchFor(
+                    document,
+                    Op("insertAfter", "target", Id(0), "node", nestedInstructions)));
+
+            Assert.That(
+                result.Document.ToXml(),
+                Does.Contain("<While id=\"1\"><Instructions /></While>"));
         }
 
         [TestCase("removeNode")]
@@ -985,19 +1059,26 @@ namespace VizzyGPT.Core.Tests.Patching
         {
             var paths = new[]
             {
-                "/Program[0]",
                 "/Program[0]/Variables[0]",
                 "/Program[0]/Instructions[0]",
                 "/Program[0]/Expressions[0]"
             };
 
-            foreach (var operationType in new[] { "removeNode", "replaceNode" })
+            foreach (var operationType in new[] { "removeNode", "replaceNode", "moveNode" })
             {
                 foreach (var path in paths)
                 {
-                    var operation = operationType == "removeNode"
-                        ? Op(operationType, "target", Path(path))
-                        : Op(operationType, "target", Path(path), "node", Spec("Log"));
+                    var operation = operationType switch
+                    {
+                        "removeNode" => Op(operationType, "target", Path(path)),
+                        "replaceNode" => Op(operationType, "target", Path(path), "node", Spec("Log")),
+                        _ => Op(
+                            operationType,
+                            "target",
+                            Path(path),
+                            "destination",
+                            Path("/Program[0]/Instructions[0]"))
+                    };
                     yield return new TestCaseData(operation.ToString(Formatting.None))
                         .SetName(operationType + "_rejects_structural_root_" + path.Replace('/', '_'));
                 }

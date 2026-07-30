@@ -1,6 +1,6 @@
 # VizzyGPT 0.1.0 Manual Test Checklist
 
-Target: Juno: New Origins 1.4.101.0c on Windows 11
+Target: Juno: New Origins 1.4.104.0c on Windows 11
 
 Mod artifact: `VizzyGPT.sr2-mod`
 Test program: the saved craft program containing the existing `while true` control loop.
@@ -18,6 +18,11 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 - [x] Open Settings and confirm base URL, API mode, model, masked API key, timeout, destination host, Test Connection, Save, and Cancel are visible. Input text renders visibly.
 - [x] Save the loopback Responses configuration and receive `Loopback test response.` in Ask mode.
+- [x] Send a delayed Chinese Ask request. Expected: the active stage and elapsed time update while waiting, then the Chinese answer and total elapsed time remain visible.
+- [x] Expand a provider reasoning summary. Expected: the summary and per-stage timing are visible.
+- [ ] Receive a successful response without provider reasoning. Expected: the row does not invent or display a reasoning summary.
+- [x] Close and reopen the panel. Expected: the active conversation is restored from persistent storage.
+- [x] Clear the active Modify conversation in Settings. Expected: only that conversation is cleared and the endpoint, model, timeout, and masked API key remain unchanged.
 - [ ] With the final build, use prompt `Explain the active Vizzy program and identify its main loop.` Expected: the response describes the active `while true` program; Apply/Preview remains unavailable.
 - [ ] Repeat with Chat Completions mode against the loopback endpoint.
 - [ ] Configure a custom HTTPS-compatible base URL and confirm the displayed destination host matches it.
@@ -36,6 +41,9 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Prompt `add loopback variable`. Expected preview line: `Added variable 'gpt_loopback'.`
 - [x] Cancel the first preview and confirm the program is unchanged.
 - [x] Generate the same preview again, Apply it, save the craft, leave Vizzy, reopen Vizzy, and confirm `gpt_loopback` persists.
+- [x] Return an operation that removes a protected structural root, then return a valid repair. Expected: exactly one repair request and an applicable preview.
+- [x] Return protected-root removals for both the initial and repair response. Expected: no Preview action, no mutation, and an expandable technical error row.
+- [x] Open the repaired preview and Cancel. Expected: the editor program remains unchanged.
 - [ ] Exercise every first-release operation with a valid fixture: add/rename/remove variable, insert before/after, insert into container, replace subtree, remove node, move node, and update attribute/constant.
 - [ ] Change the program after a preview is generated, then press Apply. Expected: stale hash error, no mutation, and regeneration required.
 - [ ] Apply a valid change, press Undo, and confirm the exact original program semantics return.
@@ -67,11 +75,13 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `446/446` passed on 2026-07-29.
-- Automated Unity EditMode results: `87/87` passed on 2026-07-29.
+- Automated Core results: `498/498` passed on 2026-07-30.
+- Automated Unity EditMode results: `138/138` passed on 2026-07-30.
 - Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 7/28/2026 5:39:29 PM`.
-- Final package hash: `48ACE2178DFE54D3E1AAB9877672CF10870251F7978B299F95C1A6608CAC7D30`.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 7/29/2026 5:24:12 PM`.
+- Final package size: `16,794,187` bytes.
+- Final package hash: `27971F80FBBDC0E58022183033785D12C125A16D1AADCCB7E7F6EF02DAD3A00B`.
+- Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
