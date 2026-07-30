@@ -66,6 +66,28 @@ namespace VizzyGPT.Core.Tests.Api
             AssertValidResponse(result, "Added yaw");
         }
 
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Ask_posts_plain_text_request_and_returns_plain_assistant_text(ApiMode mode)
+        {
+            const string answer = "这是普通问答，不是 Vizzy 补丁。";
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, answer)));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(mode, purpose: AiRequestPurpose.Ask),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+            var payload = ParseBody(transport.Requests.Single());
+            Assert.That(payload.ToString(Formatting.None), Does.Not.Contain("vizzy_patch_envelope"));
+            Assert.That(payload.ToString(Formatting.None), Does.Not.Contain("json_schema"));
+            Assert.That(result.Message, Is.EqualTo(answer));
+            Assert.That(result.Patch, Is.Null);
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Diagnostics, Is.Empty);
+        }
+
         [Test]
         public async Task Responses_normalizes_reasoning_summaries_and_nonnegative_usage()
         {
@@ -966,7 +988,8 @@ namespace VizzyGPT.Core.Tests.Api
         private static AiRequest Request(
             ApiMode mode,
             Uri? baseUri = null,
-            bool allowSchemaRepair = true)
+            bool allowSchemaRepair = true,
+            AiRequestPurpose purpose = AiRequestPurpose.Modify)
         {
             return new AiRequest(
                 mode,
@@ -976,7 +999,8 @@ namespace VizzyGPT.Core.Tests.Api
                 baseUri ?? new Uri("https://api.example.test/openai/"),
                 ApiKey,
                 TimeSpan.FromSeconds(17),
-                allowSchemaRepair);
+                allowSchemaRepair,
+                purpose);
         }
 
         private static void AssertStrictEnvelopeSchema(JObject schema)

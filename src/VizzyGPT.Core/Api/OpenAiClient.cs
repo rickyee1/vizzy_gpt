@@ -32,6 +32,8 @@ namespace VizzyGPT.Core.Api
             "Return only a JSON object matching the supplied Vizzy patch envelope schema. " +
             "Never add, remove, replace, or move the direct Program containers Variables, " +
             "Instructions, or Expressions. Modify only their permitted descendants.";
+        private const string AskModelInstruction =
+            "Answer the user's request using the supplied Vizzy context. Return ordinary text, not a patch envelope.";
 
         private readonly IAiTransport transport;
 
@@ -68,6 +70,16 @@ namespace VizzyGPT.Core.Api
             {
                 return new AiResponse(
                     MakeDisplaySafe(firstExtraction.Refusal, request.ApiKey),
+                    patch: null,
+                    canApply: false,
+                    Array.Empty<string>(),
+                    firstExtraction.Metadata);
+            }
+
+            if (request.Purpose == AiRequestPurpose.Ask)
+            {
+                return new AiResponse(
+                    MakeAssistantTextSafe(firstExtraction.ModelOutput!, request.ApiKey),
                     patch: null,
                     canApply: false,
                     Array.Empty<string>(),
@@ -141,8 +153,8 @@ namespace VizzyGPT.Core.Api
             var endpoint = endpointMode == ApiMode.Responses ? "/v1/responses" : "/v1/chat/completions";
             var uri = new Uri(request.BaseUri.AbsoluteUri.TrimEnd('/') + endpoint, UriKind.Absolute);
             var payload = endpointMode == ApiMode.Responses
-                ? CreateResponsesPayload(request.Model, input)
-                : CreateChatPayload(request.Model, input);
+                ? CreateResponsesPayload(request.Model, input, request.Purpose)
+                : CreateChatPayload(request.Model, input, request.Purpose);
             var headers = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["Authorization"] = "Bearer " + request.ApiKey,
@@ -175,22 +187,34 @@ namespace VizzyGPT.Core.Api
             }
         }
 
-        private static JObject CreateResponsesPayload(string model, string input)
+        private static JObject CreateResponsesPayload(
+            string model,
+            string input,
+            AiRequestPurpose purpose)
         {
-            return new JObject
+            var payload = new JObject
             {
                 ["model"] = model,
-                ["input"] = ModelInstruction + "\n\n" + input,
-                ["text"] = new JObject
+                ["input"] = (purpose == AiRequestPurpose.Ask ? AskModelInstruction : ModelInstruction) +
+                    "\n\n" + input
+            };
+            if (purpose == AiRequestPurpose.Modify)
+            {
+                payload["text"] = new JObject
                 {
                     ["format"] = CreateSchemaFormat()
-                }
-            };
+                };
+            }
+
+            return payload;
         }
 
-        private static JObject CreateChatPayload(string model, string input)
+        private static JObject CreateChatPayload(
+            string model,
+            string input,
+            AiRequestPurpose purpose)
         {
-            return new JObject
+            var payload = new JObject
             {
                 ["model"] = model,
                 ["messages"] = new JArray
@@ -198,15 +222,20 @@ namespace VizzyGPT.Core.Api
                     new JObject
                     {
                         ["role"] = "system",
-                        ["content"] = ModelInstruction
+                        ["content"] = purpose == AiRequestPurpose.Ask
+                            ? AskModelInstruction
+                            : ModelInstruction
                     },
                     new JObject
                     {
                         ["role"] = "user",
                         ["content"] = input
                     }
-                },
-                ["response_format"] = new JObject
+                }
+            };
+            if (purpose == AiRequestPurpose.Modify)
+            {
+                payload["response_format"] = new JObject
                 {
                     ["type"] = "json_schema",
                     ["json_schema"] = new JObject
@@ -215,8 +244,10 @@ namespace VizzyGPT.Core.Api
                         ["strict"] = true,
                         ["schema"] = CreateEnvelopeSchema()
                     }
-                }
-            };
+                };
+            }
+
+            return payload;
         }
 
         private static JObject CreateSchemaFormat()
@@ -779,6 +810,22 @@ namespace VizzyGPT.Core.Api
             if (builder.Length > 0 && char.IsHighSurrogate(builder[builder.Length - 1]))
             {
                 builder.Length--;
+            }
+
+            return builder.ToString();
+        }
+
+        private static string MakeAssistantTextSafe(string value, string apiKey)
+        {
+            var redacted = SecretRedactor.Redact(value, apiKey)
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n');
+            var builder = new StringBuilder(redacted.Length);
+            foreach (var character in redacted)
+            {
+                builder.Append(char.IsControl(character) && character != '\n' && character != '\t'
+                    ? ' '
+                    : character);
             }
 
             return builder.ToString();
