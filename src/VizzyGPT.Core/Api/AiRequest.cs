@@ -2,6 +2,12 @@ using System;
 
 namespace VizzyGPT.Core.Api
 {
+    public enum AiRequestPurpose
+    {
+        Ask,
+        Modify
+    }
+
     public sealed class AiRequest
     {
         public AiRequest(
@@ -12,11 +18,17 @@ namespace VizzyGPT.Core.Api
             Uri baseUri,
             string apiKey,
             TimeSpan timeout,
-            bool allowSchemaRepair = true)
+            bool allowSchemaRepair = true,
+            AiRequestPurpose purpose = AiRequestPurpose.Modify)
         {
             if (!Enum.IsDefined(typeof(ApiMode), mode))
             {
                 throw new ArgumentOutOfRangeException(nameof(mode));
+            }
+
+            if (!Enum.IsDefined(typeof(AiRequestPurpose), purpose))
+            {
+                throw new ArgumentOutOfRangeException(nameof(purpose));
             }
 
             Prompt = RequireValue(prompt, nameof(prompt));
@@ -32,6 +44,7 @@ namespace VizzyGPT.Core.Api
             Mode = mode;
             Timeout = timeout;
             AllowSchemaRepair = allowSchemaRepair;
+            Purpose = purpose;
         }
 
         public ApiMode Mode { get; }
@@ -49,6 +62,8 @@ namespace VizzyGPT.Core.Api
         public TimeSpan Timeout { get; }
 
         public bool AllowSchemaRepair { get; }
+
+        public AiRequestPurpose Purpose { get; }
 
         private static Uri NormalizeBaseUri(Uri baseUri)
         {

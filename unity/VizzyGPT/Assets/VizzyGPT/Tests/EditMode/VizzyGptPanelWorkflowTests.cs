@@ -222,10 +222,30 @@ namespace VizzyGPT.Tests.EditMode
             workflow.SendPromptAsync("Explain this program.").GetAwaiter().GetResult();
 
             Assert.That(sentRequest, Is.Not.Null);
-            Assert.That(sentRequest!.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
+            Assert.That(sentRequest!.Purpose, Is.EqualTo(AiRequestPurpose.Ask));
+            Assert.That(sentRequest.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
             Assert.That(sentRequest.Context, Does.Contain("Ask mode does not permit program mutation."));
             Assert.That(workflow.CanApply, Is.False);
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Modify_marks_the_model_request_as_a_patch_request()
+        {
+            AiRequest? sentRequest = null;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                sentRequest = request;
+                return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sentRequest, Is.Not.Null);
+            Assert.That(sentRequest!.Purpose, Is.EqualTo(AiRequestPurpose.Modify));
         }
 
         [Test]

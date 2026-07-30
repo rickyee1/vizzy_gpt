@@ -2,21 +2,41 @@
 <XmlLayout xmlns="http://www.w3schools.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="..\..\..\..\ModTools\UI\XmlLayout.xsd">
   <Include path="Ui/Xml/Styles.xml" />
   <Panel id="settings-dialog" class="dialog-background">
-    <Panel id="settings-dialog-content" class="panel border" width="600" height="520">
-      <TextMeshPro id="settings-title" text="Vizzy GPT Settings" class="text-header" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -52" offsetMax="400 -20" />
-      <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="12" anchorMin="0 0" anchorMax="1 1" offsetMin="20 84" offsetMax="-20 -70">
-        <TextMeshPro text="Base URL" class="label" /><TextMeshProInputField id="base-url-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
-        <TextMeshPro text="API mode" class="label" /><TextMeshProInputField id="api-mode-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
-        <TextMeshPro text="Model" class="label" /><TextMeshProInputField id="model-input" lineType="SingleLine"><TMP_Text color="White" /></TextMeshProInputField>
-        <TextMeshPro text="API key" class="label" /><TextMeshProInputField id="api-key-input" lineType="SingleLine" contentType="Password"><TMP_Text color="White" /></TextMeshProInputField>
-        <TextMeshPro text="Timeout seconds" class="label" /><TextMeshProInputField id="timeout-input" lineType="SingleLine" contentType="IntegerNumber"><TMP_Text color="White" /></TextMeshProInputField>
-        <TextMeshPro id="destination-host-text" class="value" />
-        <TextMeshPro id="connection-status-text" class="label" />
+    <Panel id="settings-dialog-content" class="panel border" width="700" height="480">
+      <TextMeshPro id="settings-title" text="Vizzy GPT Settings" class="text-header" fontSize="24" anchorMin="0 1" anchorMax="0 1" pivot="0 1" offsetMin="20 -46" offsetMax="420 -16" />
+      <VerticalLayout id="settings-form" class="no-image" childForceExpandHeight="false" spacing="10" anchorMin="0 0" anchorMax="1 1" offsetMin="20 76" offsetMax="-20 -58">
+        <TextMeshPro text="Base URL" class="label" preferredHeight="22" />
+        <TextMeshProInputField id="base-url-input" lineType="SingleLine" preferredHeight="34"><TMP_Text color="White" /></TextMeshProInputField>
+        <HorizontalLayout id="connection-row" class="no-image" childForceExpandHeight="false" spacing="16" preferredHeight="72">
+          <VerticalLayout id="api-mode-column" class="no-image" childForceExpandHeight="false" spacing="6" preferredWidth="322">
+            <TextMeshPro text="API mode" class="label" preferredHeight="22" />
+            <TextMeshProInputField id="api-mode-input" lineType="SingleLine" preferredHeight="34"><TMP_Text color="White" /></TextMeshProInputField>
+          </VerticalLayout>
+          <VerticalLayout id="model-column" class="no-image" childForceExpandHeight="false" spacing="6" preferredWidth="322">
+            <TextMeshPro text="Model" class="label" preferredHeight="22" />
+            <TextMeshProInputField id="model-input" lineType="SingleLine" preferredHeight="34"><TMP_Text color="White" /></TextMeshProInputField>
+          </VerticalLayout>
+        </HorizontalLayout>
+        <TextMeshPro text="API key" class="label" preferredHeight="22" />
+        <TextMeshProInputField id="api-key-input" lineType="SingleLine" contentType="Password" preferredHeight="34"><TMP_Text color="White" /></TextMeshProInputField>
+        <HorizontalLayout id="runtime-row" class="no-image" childForceExpandHeight="false" spacing="16" preferredHeight="72">
+          <VerticalLayout id="timeout-column" class="no-image" childForceExpandHeight="false" spacing="6" preferredWidth="220">
+            <TextMeshPro text="Timeout seconds" class="label" preferredHeight="22" />
+            <TextMeshProInputField id="timeout-input" lineType="SingleLine" contentType="IntegerNumber" preferredHeight="34"><TMP_Text color="White" /></TextMeshProInputField>
+          </VerticalLayout>
+          <VerticalLayout id="destination-column" class="no-image" childForceExpandHeight="false" spacing="6" preferredWidth="424">
+            <TextMeshPro text="Request destination" class="label" preferredHeight="22" />
+            <TextMeshPro id="destination-host-text" class="value" preferredHeight="34" alignment="Left" />
+          </VerticalLayout>
+        </HorizontalLayout>
+        <TextMeshPro id="connection-status-text" class="label" preferredHeight="22" />
       </VerticalLayout>
-      <Button id="clear-history-button" class="btn" rectAlignment="LowerLeft" width="170" height="30" offsetXY="20 64" onClick="OnClearHistoryButtonClicked();"><TextMeshPro text="Clear Chat History" /></Button>
-      <Button id="test-button" class="btn" rectAlignment="LowerLeft" width="160" offsetXY="20 20" onClick="OnTestConnectionButtonClicked();"><TextMeshPro text="Test Connection" /></Button>
-      <Button id="cancel-button" class="btn" rectAlignment="LowerCenter" width="130" offsetXY="0 20" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
-      <Button id="save-button" class="btn btn-primary" rectAlignment="LowerRight" width="130" offsetXY="-20 20" onClick="OnSaveButtonClicked();"><TextMeshPro text="Save" /></Button>
+      <HorizontalLayout id="settings-footer" class="no-image" childForceExpandHeight="false" spacing="12" rectAlignment="LowerCenter" width="660" height="34" offsetXY="0 20">
+        <Button id="clear-history-button" class="btn" width="160" preferredWidth="160" height="34" onClick="OnClearHistoryButtonClicked();"><TextMeshPro text="Clear Chat History" /></Button>
+        <Button id="test-button" class="btn" width="150" preferredWidth="150" height="34" onClick="OnTestConnectionButtonClicked();"><TextMeshPro text="Test Connection" /></Button>
+        <Button id="cancel-button" class="btn" width="150" preferredWidth="150" height="34" onClick="OnCancelButtonClicked();"><TextMeshPro text="Cancel" /></Button>
+        <Button id="save-button" class="btn btn-primary" width="164" preferredWidth="164" height="34" onClick="OnSaveButtonClicked();"><TextMeshPro text="Save" /></Button>
+      </HorizontalLayout>
     </Panel>
   </Panel>
 </XmlLayout>

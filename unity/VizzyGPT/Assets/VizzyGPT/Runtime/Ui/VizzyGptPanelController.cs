@@ -410,7 +410,11 @@ namespace VizzyGPT.Runtime.Ui
                 if (requestContext.Mode == VizzyGptPanelMode.Ask)
                 {
                     AdvanceStage(RequestStage.WaitingForModel);
-                    var response = await sendAsync(createRequest(prompt, requestContext.AiContext), cancellationToken);
+                    var response = await sendAsync(
+                        CloneRequest(
+                            createRequest(prompt, requestContext.AiContext),
+                            AiRequestPurpose.Ask),
+                        cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!IsCurrentRequest(generation, cancellation))
                     {
@@ -938,18 +942,10 @@ namespace VizzyGPT.Runtime.Ui
                 ? source.AiContext
                 : source.AiContext + "\n\n" + repairContext;
             var request = createRequest(prompt, context);
-            if (repairContext != null && request.AllowSchemaRepair)
-            {
-                request = new AiRequest(
-                    request.Mode,
-                    request.Prompt,
-                    request.Context,
-                    request.Model,
-                    request.BaseUri,
-                    request.ApiKey,
-                    request.Timeout,
-                    allowSchemaRepair: false);
-            }
+            request = CloneRequest(
+                request,
+                AiRequestPurpose.Modify,
+                repairContext == null ? request.AllowSchemaRepair : false);
 
             var response = await sendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -1502,6 +1498,23 @@ namespace VizzyGPT.Runtime.Ui
             return environment.GetProgramFingerprint(hash);
         }
 
+        private static AiRequest CloneRequest(
+            AiRequest request,
+            AiRequestPurpose purpose,
+            bool? allowSchemaRepair = null)
+        {
+            return new AiRequest(
+                request.Mode,
+                request.Prompt,
+                request.Context,
+                request.Model,
+                request.BaseUri,
+                request.ApiKey,
+                request.Timeout,
+                allowSchemaRepair ?? request.AllowSchemaRepair,
+                purpose);
+        }
+
         private bool TryGetFlightSnapshot(out string xml, out string error)
         {
             xml = environment.ResolveLaunchProgramXml() ?? string.Empty;
@@ -1598,6 +1611,77 @@ namespace VizzyGPT.Runtime.Ui
         }
     }
 
+    public sealed class PromptHistoryNavigator
+    {
+        private string[] entries = Array.Empty<string>();
+        private int index;
+        private bool browsing;
+
+        public void Update(IEnumerable<string> values)
+        {
+            var next = (values ?? throw new ArgumentNullException(nameof(values)))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray();
+            if (entries.SequenceEqual(next, StringComparer.Ordinal))
+            {
+                return;
+            }
+
+            entries = next;
+            Reset();
+        }
+
+        public bool TryMove(int direction, string currentText, out string value)
+        {
+            value = currentText ?? string.Empty;
+            if (direction != -1 && direction != 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(direction));
+            }
+
+            if (!browsing)
+            {
+                if (direction > 0 || value.Length != 0 || entries.Length == 0)
+                {
+                    return false;
+                }
+
+                browsing = true;
+                index = entries.Length;
+            }
+
+            index = Math.Max(0, Math.Min(entries.Length, index + direction));
+            if (index == entries.Length)
+            {
+                value = string.Empty;
+                browsing = false;
+                return true;
+            }
+
+            value = entries[index];
+            return true;
+        }
+
+        public void NotifyEdited(string value)
+        {
+            if (!browsing ||
+                (index >= 0 &&
+                 index < entries.Length &&
+                 string.Equals(entries[index], value, StringComparison.Ordinal)))
+            {
+                return;
+            }
+
+            Reset();
+        }
+
+        public void Reset()
+        {
+            browsing = false;
+            index = entries.Length;
+        }
+    }
+
     public sealed class VizzyGptPanelController : MonoBehaviour
     {
         private const float PreferredPanelWidth = 500f;
@@ -1628,7 +1712,9 @@ namespace VizzyGPT.Runtime.Ui
         private Button? undoButton;
         private Toggle? askToggle;
         private Toggle? modifyToggle;
+        private readonly PromptHistoryNavigator promptHistory = new PromptHistoryNavigator();
         private float nextElapsedRefreshTime;
+        private bool restoreComposerFocus;
 
         public VizzyGptPanelWorkflow Workflow => workflow ??
             throw new InvalidOperationException("Vizzy GPT panel is not configured.");
@@ -1689,6 +1775,7 @@ namespace VizzyGPT.Runtime.Ui
             {
                 // The stock TMP input owns focus; ModApi exposes its UI focus gates as read-only.
                 composerInput.onValueChanged.AddListener(OnPromptValueChanged);
+                composerInput.onSubmit.AddListener(OnComposerSubmitted);
                 composerInput.text = prompt;
             }
 
@@ -1698,6 +1785,31 @@ namespace VizzyGPT.Runtime.Ui
         public void SetPromptText(string value)
         {
             prompt = value ?? string.Empty;
+        }
+
+        public void HandleComposerSubmit(bool shiftPressed)
+        {
+            if (composerInput == null || !composerInput.interactable)
+            {
+                return;
+            }
+
+            if (!shiftPressed)
+            {
+                restoreComposerFocus = true;
+                OnSendButtonClicked();
+                return;
+            }
+
+            var position = Math.Max(0, Math.Min(composerInput.stringPosition, composerInput.text.Length));
+            var value = composerInput.text.Insert(position, "\n");
+            composerInput.SetTextWithoutNotify(value);
+            SetPromptText(value);
+            composerInput.stringPosition = position + 1;
+            composerInput.selectionStringFocusPosition = position + 1;
+            composerInput.ForceLabelUpdate();
+            promptHistory.NotifyEdited(value);
+            restoreComposerFocus = true;
         }
 
         public void RefreshDynamicTextFonts()
@@ -1794,6 +1906,9 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             messageList?.Render(state.Entries);
+            promptHistory.Update(state.Entries
+                .Where(entry => entry.Role == ConversationRole.User)
+                .Select(entry => entry.Text));
 
             if (panelRoot != null)
             {
@@ -1833,6 +1948,7 @@ namespace VizzyGPT.Runtime.Ui
         private void OnPromptValueChanged(string value)
         {
             SetPromptText(value);
+            promptHistory.NotifyEdited(prompt);
             if (CjkTextFontApplicator.ApplyToInput(composerInput, expectedCjkFont))
             {
                 composerInput?.ForceLabelUpdate();
@@ -1844,6 +1960,18 @@ namespace VizzyGPT.Runtime.Ui
             prompt = string.Empty;
             composerInput?.SetTextWithoutNotify(string.Empty);
             composerInput?.ForceLabelUpdate();
+            promptHistory.Reset();
+        }
+
+        private void OnComposerSubmitted(string value)
+        {
+            if (!string.IsNullOrEmpty(Input.compositionString))
+            {
+                return;
+            }
+
+            HandleComposerSubmit(
+                Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
         }
 
         private void LateUpdate()
@@ -1854,6 +1982,7 @@ namespace VizzyGPT.Runtime.Ui
         private void Update()
         {
             RefreshResponsiveLayout();
+            RefreshComposerKeyboard();
             if (workflow == null || Time.unscaledTime < nextElapsedRefreshTime)
             {
                 return;
@@ -1861,6 +1990,41 @@ namespace VizzyGPT.Runtime.Ui
 
             nextElapsedRefreshTime = Time.unscaledTime + 0.25f;
             workflow.RefreshElapsed();
+        }
+
+        private void RefreshComposerKeyboard()
+        {
+            if (composerInput == null)
+            {
+                return;
+            }
+
+            if (restoreComposerFocus)
+            {
+                restoreComposerFocus = false;
+                composerInput.ActivateInputField();
+            }
+
+            if (!composerInput.isFocused || !string.IsNullOrEmpty(Input.compositionString))
+            {
+                return;
+            }
+
+            var direction = Input.GetKeyDown(KeyCode.UpArrow)
+                ? -1
+                : Input.GetKeyDown(KeyCode.DownArrow)
+                    ? 1
+                    : 0;
+            if (direction == 0 || !promptHistory.TryMove(direction, prompt, out var value))
+            {
+                return;
+            }
+
+            composerInput.SetTextWithoutNotify(value);
+            SetPromptText(value);
+            composerInput.stringPosition = value.Length;
+            composerInput.selectionStringFocusPosition = value.Length;
+            composerInput.ForceLabelUpdate();
         }
 
         private void UnbindInput()
@@ -1871,6 +2035,7 @@ namespace VizzyGPT.Runtime.Ui
             }
 
             composerInput.onValueChanged.RemoveListener(OnPromptValueChanged);
+            composerInput.onSubmit.RemoveListener(OnComposerSubmitted);
             composerInput = null;
         }
 
