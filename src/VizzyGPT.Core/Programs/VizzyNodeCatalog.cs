@@ -11,17 +11,20 @@ namespace VizzyGPT.Core.Programs
         private readonly ImmutableOrdinalStringSet elements;
         private readonly ImmutableOrdinalStringSet instructionElements;
         private readonly ImmutableOrdinalStringSet expressionElements;
+        private readonly string[] templates;
 
         private VizzyNodeCatalog(
             ImmutableOrdinalStringSet styles,
             ImmutableOrdinalStringSet elements,
             ImmutableOrdinalStringSet instructionElements,
-            ImmutableOrdinalStringSet expressionElements)
+            ImmutableOrdinalStringSet expressionElements,
+            IEnumerable<string> templates)
         {
             this.styles = styles;
             this.elements = elements;
             this.instructionElements = instructionElements;
             this.expressionElements = expressionElements;
+            this.templates = DistinctOrdinal(templates);
         }
 
         public static VizzyNodeCatalog FromToolboxXml(string xml)
@@ -54,13 +57,19 @@ namespace VizzyGPT.Core.Programs
                 .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor));
             var expressionElements = CategoryElements(root, "Expressions")
                 .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor));
+            var templates = stockNodes.Any()
+                ? stockNodes.Select(CanonicalTemplate)
+                : CompactTemplates(root).Select(CanonicalTemplate);
 
             return new VizzyNodeCatalog(
                 new ImmutableOrdinalStringSet(styles),
                 new ImmutableOrdinalStringSet(elements),
                 new ImmutableOrdinalStringSet(instructionElements),
-                new ImmutableOrdinalStringSet(expressionElements));
+                new ImmutableOrdinalStringSet(expressionElements),
+                templates);
         }
+
+        public IReadOnlyList<string> Templates => Array.AsReadOnly(templates);
 
         public bool ContainsStyle(string? style)
         {
@@ -90,6 +99,52 @@ namespace VizzyGPT.Core.Programs
                     string.Equals(element.Name.LocalName, categoryName, StringComparison.Ordinal))
                 .SelectMany(category => category.Elements())
                 .Select(element => element.Name.LocalName);
+        }
+
+        private static IEnumerable<XElement> CompactTemplates(XElement root)
+        {
+            return root.Elements()
+                .Where(element =>
+                    element.Name.NamespaceName.Length == 0 &&
+                    (string.Equals(element.Name.LocalName, "Instructions", StringComparison.Ordinal) ||
+                     string.Equals(element.Name.LocalName, "Expressions", StringComparison.Ordinal)))
+                .SelectMany(container => container.Elements());
+        }
+
+        private static string CanonicalTemplate(XElement node)
+        {
+            var clone = new XElement(node);
+            CanonicalizeTemplateElement(clone);
+            return clone.ToString(SaveOptions.DisableFormatting);
+        }
+
+        private static void CanonicalizeTemplateElement(XElement element)
+        {
+            element.ReplaceAttributes(element.Attributes()
+                .OrderBy(attribute => attribute.Name.LocalName, StringComparer.Ordinal)
+                .ThenBy(attribute => attribute.Name.NamespaceName, StringComparer.Ordinal)
+                .Select(attribute => new XAttribute(attribute)));
+
+            var textNodes = element.Nodes().OfType<XText>().ToArray();
+            if (textNodes.All(text => string.IsNullOrWhiteSpace(text.Value)))
+            {
+                foreach (var textNode in textNodes)
+                {
+                    textNode.Remove();
+                }
+            }
+
+            foreach (var child in element.Elements())
+            {
+                CanonicalizeTemplateElement(child);
+            }
+        }
+
+        private static string[] DistinctOrdinal(IEnumerable<string> source)
+        {
+            var values = new HashSet<string>(source, StringComparer.Ordinal).ToArray();
+            Array.Sort(values, StringComparer.Ordinal);
+            return values;
         }
 
         private static IEnumerable<string> StockCategoryElements(
@@ -134,8 +189,7 @@ namespace VizzyGPT.Core.Programs
                     throw new ArgumentNullException(nameof(source));
                 }
 
-                values = new HashSet<string>(source, StringComparer.Ordinal).ToArray();
-                Array.Sort(values, StringComparer.Ordinal);
+                values = DistinctOrdinal(source);
             }
 
             public bool Contains(string value)
