@@ -26,6 +26,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [ ] With the final build, use prompt `Explain the active Vizzy program and identify its main loop.` Expected: the response describes the active `while true` program; Apply/Preview remains unavailable.
 - [ ] Repeat with Chat Completions mode against the loopback endpoint.
 - [ ] Configure a custom HTTPS-compatible base URL and confirm the displayed destination host matches it.
+- [ ] Use Ask mode for a Vizzy question without receiving the large node reference. Expected: Ask remains usable without that reference.
 
 ## Chinese Text Rendering
 
@@ -44,6 +45,9 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Return an operation that removes a protected structural root, then return a valid repair. Expected: exactly one repair request and an applicable preview.
 - [x] Return protected-root removals for both the initial and repair response. Expected: no Preview action, no mutation, and an expandable technical error row.
 - [x] Open the repaired preview and Cancel. Expected: the editor program remains unchanged.
+- [ ] Request setting throttle. Expected: the generated node is `SetInput` with style `set-input`.
+- [ ] Return a fabricated `set-throttle` first response for a throttle request. Expected: exactly one repair request uses the valid `SetInput`/`set-input` template.
+- [ ] Return responses outside the catalog for both the initial and repair attempts. Expected: no Preview and no program mutation.
 - [ ] Exercise every first-release operation with a valid fixture: add/rename/remove variable, insert before/after, insert into container, replace subtree, remove node, move node, and update attribute/constant.
 - [ ] Change the program after a preview is generated, then press Apply. Expected: stale hash error, no mutation, and regeneration required.
 - [ ] Apply a valid change, press Undo, and confirm the exact original program semantics return.
@@ -75,8 +79,8 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `498/498` passed on 2026-07-30.
-- Automated Unity EditMode results: `138/138` passed on 2026-07-30.
+- Automated Core results: `509/509` passed on 2026-07-30.
+- Automated Unity EditMode results: `146/146` passed on 2026-07-30.
 - Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and

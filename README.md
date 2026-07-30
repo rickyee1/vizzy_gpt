@@ -39,6 +39,15 @@ Plain HTTP is accepted only for loopback hosts. The API key is protected with Wi
 
 If the running Juno version does not expose one unambiguous Vizzy editor contract, Ask remains available while Modify and Preview are hidden.
 
+### Vizzy model skill
+
+Modify requests include a bundled Vizzy programming guide and node templates
+derived from the installed toolbox. No separate Codex skill or documentation
+download is required. Local catalog and serializer validation remain the final
+authority before Preview. General-purpose libraries such as PyTorch cannot be
+implemented inside Vizzy, and generated nodes are restricted to the installed
+local game version.
+
 ## Development
 
 ```powershell
