@@ -253,12 +253,39 @@ namespace VizzyGPT.Core.Validation
             foreach (var element in document.Root.DescendantsAndSelf())
             {
                 var style = element.Attribute("style");
-                if (style != null && !catalog.ContainsStyle(style.Value))
+                if (style == null)
+                {
+                    continue;
+                }
+
+                if (!catalog.ContainsStyle(style.Value))
                 {
                     issues.Add(
                         Error(
                             "UnknownStyle",
                             "Style '" + style.Value + "' is not present in the node catalog.",
+                            PathFor(element)));
+                    continue;
+                }
+
+                if (!catalog.ContainsStyledElement(element.Name.LocalName))
+                {
+                    issues.Add(
+                        Error(
+                            "UnknownStyledElement",
+                            "Element '" + element.Name.LocalName +
+                                "' is not present in the node catalog templates.",
+                            PathFor(element)));
+                    continue;
+                }
+
+                if (!catalog.ContainsElementStylePair(element.Name.LocalName, style.Value))
+                {
+                    issues.Add(
+                        Error(
+                            "MismatchedElementStyle",
+                            "Style '" + style.Value + "' is not valid for element '" +
+                                element.Name.LocalName + "' in the node catalog templates.",
                             PathFor(element)));
                 }
             }

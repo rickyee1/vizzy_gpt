@@ -591,7 +591,38 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(requests[1].Context, Does.Contain("style=\"set-input\""));
             Assert.That(requests[1].Context, Does.Contain("input=\"throttle\""));
             Assert.That(requests[1].Context, Does.Not.Contain("<Style"));
+            Assert.That(requests[1].Context, Does.Not.Contain("<SetThrottle"));
+            Assert.That(requests[1].Context, Does.Contain("Style 'set-throttle'"));
+            Assert.That(
+                requests[1].Context.Split(new[] { "set-throttle" }, StringSplitOptions.None),
+                Has.Length.EqualTo(2));
             Assert.That(catalogCalls, Is.EqualTo(1));
+            Assert.That(adapter.SetCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Modify_repairs_one_known_but_mismatched_element_style_pair_before_preview()
+        {
+            var requests = new List<AiRequest>();
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(requests.Count == 1
+                        ? CreateMismatchedStyleResponse(InitialXml)
+                        : CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: CreateThrottleCatalog);
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].Context, Does.Contain("Error code: MismatchedElementStyle"));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
             Assert.That(adapter.SetCalls, Is.Zero);
         }
 
@@ -853,6 +884,38 @@ namespace VizzyGPT.Tests.EditMode
             return new AiResponse("Invalid throttle preview.", patch, true, Array.Empty<string>());
         }
 
+        private static AiResponse CreateMismatchedStyleResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Insert mismatched throttle control",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]/Instructions[0]"),
+                        node: new NodeSpec(
+                            "SetInput",
+                            new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["style"] = "flight-start",
+                                ["input"] = "throttle"
+                            },
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Constant",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["number"] = "0"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Mismatched throttle preview.", patch, true, Array.Empty<string>());
+        }
+
         private static VizzyNodeCatalog CreateCatalog()
         {
             return VizzyNodeCatalog.FromToolboxXml(
@@ -862,8 +925,8 @@ namespace VizzyGPT.Tests.EditMode
         private static VizzyNodeCatalog CreateThrottleCatalog()
         {
             return VizzyNodeCatalog.FromToolboxXml(
-                "<VizzyToolbox><Styles><Style id='set-input' color='CraftInstruction' /></Styles>" +
-                "<Categories><Category name='Craft Instructions'>" +
+                "<VizzyToolbox><Styles><Style id='flight-start' color='Event' /><Style id='set-input' color='CraftInstruction' /></Styles>" +
+                "<Categories><Category name='Events'><Event style='flight-start' /></Category><Category name='Craft Instructions'>" +
                 "<SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput>" +
                 "</Category></Categories></VizzyToolbox>");
         }

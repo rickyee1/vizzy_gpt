@@ -71,6 +71,47 @@ namespace VizzyGPT.Core.Tests.Validation
         }
 
         [Test]
+        public void Validate_rejects_a_styled_element_absent_from_the_catalog_templates()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetThrottle style='set-input'><Constant number='0' /></SetThrottle></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            AssertCatalogError(
+                report,
+                "UnknownStyledElement",
+                "Element 'SetThrottle' is not present in the node catalog templates.",
+                "/Program[0]/Instructions[0]/SetThrottle[0]");
+        }
+
+        [Test]
+        public void Validate_rejects_a_known_style_paired_with_the_wrong_catalog_element()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetInput style='flight-start' input='throttle'><Constant number='0' /></SetInput></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            AssertCatalogError(
+                report,
+                "MismatchedElementStyle",
+                "Style 'flight-start' is not valid for element 'SetInput' in the node catalog templates.",
+                "/Program[0]/Instructions[0]/SetInput[0]");
+        }
+
+        [Test]
+        public void Validate_accepts_a_catalog_template_element_style_pair()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            Assert.That(report.IsValid, Is.True, string.Join("\n", report.Errors.Select(issue => issue.Message)));
+        }
+
+        [Test]
         public void Validate_reports_unresolved_global_variable_references()
         {
             var document = Document(
@@ -247,8 +288,15 @@ namespace VizzyGPT.Core.Tests.Validation
         private static VizzyNodeCatalog Catalog() => VizzyNodeCatalog.FromToolboxXml(
             "<VizzyToolbox><Styles>" +
             "<Style id='flight-start' /><Style id='log' /><Style id='set-variable' />" +
-            "</Styles><Instructions><Event /><Log /><SetVariable /><While /><DynamicInstruction /></Instructions>" +
+            "</Styles><Instructions><Event style='flight-start' /><Log style='log' /><SetVariable style='set-variable' /><While /><DynamicInstruction /></Instructions>" +
             "<Expressions><Constant /><Variable /><CustomNode /><DynamicExpression /></Expressions></VizzyToolbox>");
+
+        private static VizzyNodeCatalog PairCatalog() => VizzyNodeCatalog.FromToolboxXml(
+            "<VizzyToolbox><Styles>" +
+            "<Style id='flight-start' color='Event' /><Style id='set-input' color='CraftInstruction' />" +
+            "</Styles><Categories><Category name='Events'><Event style='flight-start' /></Category>" +
+            "<Category name='Craft Instructions'><SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput></Category>" +
+            "</Categories></VizzyToolbox>");
 
         private static VizzyProgramDocument Document(string xml) => VizzyProgramDocument.Parse(xml);
 
@@ -261,6 +309,19 @@ namespace VizzyGPT.Core.Tests.Validation
             var issue = report.Errors.Single(candidate => candidate.Code == code);
             Assert.That(issue.Severity, Is.EqualTo(ValidationSeverity.Error));
             Assert.That(issue.Message, Does.Contain(messageFragment));
+        }
+
+        private static void AssertCatalogError(
+            ValidationReport report,
+            string code,
+            string message,
+            string path)
+        {
+            Assert.That(report.IsValid, Is.False);
+            var issue = report.Errors.Single(candidate => candidate.Code == code);
+            Assert.That(issue.Severity, Is.EqualTo(ValidationSeverity.Error));
+            Assert.That(issue.Message, Is.EqualTo(message));
+            Assert.That(issue.Path, Is.EqualTo(path));
         }
     }
 }

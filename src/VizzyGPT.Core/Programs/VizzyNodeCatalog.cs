@@ -11,6 +11,8 @@ namespace VizzyGPT.Core.Programs
         private readonly ImmutableOrdinalStringSet elements;
         private readonly ImmutableOrdinalStringSet instructionElements;
         private readonly ImmutableOrdinalStringSet expressionElements;
+        private readonly ImmutableOrdinalStringSet styledElements;
+        private readonly ImmutableOrdinalStringSet elementStylePairs;
         private readonly string[] templates;
 
         private VizzyNodeCatalog(
@@ -18,12 +20,16 @@ namespace VizzyGPT.Core.Programs
             ImmutableOrdinalStringSet elements,
             ImmutableOrdinalStringSet instructionElements,
             ImmutableOrdinalStringSet expressionElements,
+            ImmutableOrdinalStringSet styledElements,
+            ImmutableOrdinalStringSet elementStylePairs,
             IEnumerable<string> templates)
         {
             this.styles = styles;
             this.elements = elements;
             this.instructionElements = instructionElements;
             this.expressionElements = expressionElements;
+            this.styledElements = styledElements;
+            this.elementStylePairs = elementStylePairs;
             this.templates = DistinctOrdinal(templates);
         }
 
@@ -57,16 +63,23 @@ namespace VizzyGPT.Core.Programs
                 .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor));
             var expressionElements = CategoryElements(root, "Expressions")
                 .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor));
-            var templates = stockNodes.Any()
-                ? stockNodes.Select(CanonicalTemplate)
-                : CompactTemplates(root).Select(CanonicalTemplate);
+            var concreteTemplates = stockNodes.Any()
+                ? stockNodes
+                : CompactTemplates(root).ToArray();
+            var styledTemplateNodes = concreteTemplates
+                .SelectMany(template => template.DescendantsAndSelf())
+                .Where(node => node.Attribute("style") != null)
+                .ToArray();
 
             return new VizzyNodeCatalog(
                 new ImmutableOrdinalStringSet(styles),
                 new ImmutableOrdinalStringSet(elements),
                 new ImmutableOrdinalStringSet(instructionElements),
                 new ImmutableOrdinalStringSet(expressionElements),
-                templates);
+                new ImmutableOrdinalStringSet(styledTemplateNodes.Select(node => node.Name.LocalName)),
+                new ImmutableOrdinalStringSet(styledTemplateNodes.Select(node =>
+                    ElementStylePairKey(node.Name.LocalName, node.Attribute("style")!.Value))),
+                concreteTemplates.Select(CanonicalTemplate));
         }
 
         public IReadOnlyList<string> Templates => Array.AsReadOnly(templates);
@@ -89,6 +102,18 @@ namespace VizzyGPT.Core.Programs
         public bool ContainsExpressionElement(string? element)
         {
             return element != null && expressionElements.Contains(element);
+        }
+
+        public bool ContainsStyledElement(string? element)
+        {
+            return element != null && styledElements.Contains(element);
+        }
+
+        public bool ContainsElementStylePair(string? element, string? style)
+        {
+            return element != null &&
+                style != null &&
+                elementStylePairs.Contains(ElementStylePairKey(element, style));
         }
 
         private static IEnumerable<string> CategoryElements(XElement root, string categoryName)
@@ -145,6 +170,11 @@ namespace VizzyGPT.Core.Programs
             var values = new HashSet<string>(source, StringComparer.Ordinal).ToArray();
             Array.Sort(values, StringComparer.Ordinal);
             return values;
+        }
+
+        private static string ElementStylePairKey(string element, string style)
+        {
+            return element + "\0" + style;
         }
 
         private static IEnumerable<string> StockCategoryElements(
