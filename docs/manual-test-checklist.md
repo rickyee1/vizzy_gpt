@@ -23,6 +23,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [ ] Receive a successful response without provider reasoning. Expected: the row does not invent or display a reasoning summary.
 - [x] Close and reopen the panel. Expected: the active conversation is restored from persistent storage.
 - [x] Clear the active Modify conversation in Settings. Expected: only that conversation is cleared and the endpoint, model, timeout, and masked API key remain unchanged.
+- [x] With an empty Modify composer, press Up. Expected: the most recently sent prompt is restored; pressing Enter sends it.
 - [ ] With the final build, use prompt `Explain the active Vizzy program and identify its main loop.` Expected: the response describes the active `while true` program; Apply/Preview remains unavailable.
 - [ ] Repeat with Chat Completions mode against the loopback endpoint.
 - [ ] Configure a custom HTTPS-compatible base URL and confirm the displayed destination host matches it.
@@ -45,6 +46,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Return an operation that removes a protected structural root, then return a valid repair. Expected: exactly one repair request and an applicable preview.
 - [x] Return protected-root removals for both the initial and repair response. Expected: no Preview action, no mutation, and an expandable technical error row.
 - [x] Open the repaired preview and Cancel. Expected: the editor program remains unchanged.
+- [ ] With the final selector-schema build, prompt `帮我写一个自动着陆程序，只使用当前 Vizzy 节点目录中的节点`. Expected: the model returns a locally valid patch and Preview opens without a canonical-selector error. Live attempts on 2026-08-04 were blocked before patch parsing by the configured Synapse endpoint: one no-response failure after 60.5 seconds and one HTTP 500 after 23.9 seconds.
 - [ ] Request setting throttle. Expected: the generated node is `SetInput` with style `set-input`.
 - [ ] Return a fabricated `set-throttle` first response for a throttle request. Expected: exactly one repair request uses the valid `SetInput`/`set-input` template.
 - [ ] Return responses outside the catalog for both the initial and repair attempts. Expected: no Preview and no program mutation.
@@ -79,13 +81,14 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `509/509` passed on 2026-07-30.
-- Automated Unity EditMode results: `146/146` passed on 2026-07-30.
+- Automated Core results: `509/509` passed on 2026-08-04.
+- Automated Unity EditMode results: `146/146` passed on 2026-08-04.
 - Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 7/29/2026 5:24:12 PM`.
-- Final package size: `16,794,187` bytes.
-- Final package hash: `27971F80FBBDC0E58022183033785D12C125A16D1AADCCB7E7F6EF02DAD3A00B`.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/4/2026 2:03:09 PM`.
+- Final package size: `16,809,035` bytes.
+- Final package hash: `A27E635431340AE80A1FC31CA46520631349A2929CC89616AF9886BAFEE334EB`.
 - Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
+- Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return a patch in either attempt, so Preview/local catalog validation remains unverified rather than passed.

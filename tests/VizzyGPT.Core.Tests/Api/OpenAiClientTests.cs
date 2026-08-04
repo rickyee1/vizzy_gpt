@@ -1067,7 +1067,16 @@ namespace VizzyGPT.Core.Tests.Api
                 .Where(property => string.Equals(property.Name, "anyOf", StringComparison.Ordinal))
                 .Select(property => (JArray)property.Value)
                 .ToArray();
-            Assert.That(anyOfArrays.Any(IsSelectorUnion), Is.True);
+            var selectorUnions = anyOfArrays.Where(IsSelectorUnion).ToArray();
+            Assert.That(selectorUnions, Is.Not.Empty);
+            foreach (var selectorUnion in selectorUnions)
+            {
+                var pathVariant = selectorUnion.Single(member =>
+                    member["required"]!.Values<string>().Single() == "path");
+                Assert.That(
+                    (string?)pathVariant["properties"]!["path"]!["pattern"],
+                    Is.EqualTo("^/(?:[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])(?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$"));
+            }
 
             var nodeSpec = (JObject)schema["$defs"]!["nodeSpec"]!;
             var attributes = (JObject)nodeSpec["properties"]!["attributes"]!;

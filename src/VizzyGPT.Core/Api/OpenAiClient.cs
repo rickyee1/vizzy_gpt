@@ -27,6 +27,9 @@ namespace VizzyGPT.Core.Api
     public sealed class OpenAiClient
     {
         private const string EnvelopeName = "vizzy_patch_envelope";
+        private const string CanonicalSelectorPathPattern =
+            "^/(?:[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])" +
+            "(?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$";
         private const int MaximumDiagnosticLength = 512;
         private const string ModelInstruction =
             "Return only a JSON object matching the supplied Vizzy patch envelope schema. " +
@@ -333,7 +336,11 @@ namespace VizzyGPT.Core.Api
             {
                 ["anyOf"] = new JArray(
                     StrictObject(("id", new JObject { ["type"] = "integer" })),
-                    StrictObject(("path", StringSchema())))
+                    StrictObject(("path", new JObject
+                    {
+                        ["type"] = "string",
+                        ["pattern"] = CanonicalSelectorPathPattern
+                    })))
             };
         }
 
