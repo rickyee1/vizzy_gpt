@@ -142,6 +142,67 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Inactive_loader_only_editor_does_not_make_the_active_contract_ambiguous()
+        {
+            var activeHost = new GameObject("Active Loader Only Vizzy Editor");
+            var inactiveHost = new GameObject("Inactive Loader Only Vizzy Editor");
+            try
+            {
+                var activeEditor = activeHost.AddComponent<LoaderOnlyVizzyEditor>();
+                activeEditor.Initialize(File.ReadAllText(FixturePath));
+                var inactiveEditor = inactiveHost.AddComponent<LoaderOnlyVizzyEditor>();
+                inactiveEditor.Initialize(File.ReadAllText(FixturePath));
+                inactiveHost.SetActive(false);
+
+                var applied = false;
+                string error = null;
+                Assert.DoesNotThrow(() =>
+                    applied = new VizzyRuntimeAdapter().TrySetEditorProgramXml(
+                        ReplacementXml,
+                        out error));
+
+                Assert.That(applied, Is.True, error);
+                Assert.That(activeEditor.LoadCount, Is.EqualTo(1));
+                Assert.That(inactiveEditor.LoadCount, Is.Zero);
+                AssertThrottleReplacement(activeEditor.FlightProgram);
+            }
+            finally
+            {
+                Object.DestroyImmediate(inactiveHost);
+                Object.DestroyImmediate(activeHost);
+            }
+        }
+
+        [Test]
+        public void Multiple_active_loader_only_editors_report_ambiguity_without_throwing()
+        {
+            var firstHost = new GameObject("First Active Loader Only Vizzy Editor");
+            var secondHost = new GameObject("Second Active Loader Only Vizzy Editor");
+            try
+            {
+                firstHost.AddComponent<LoaderOnlyVizzyEditor>()
+                    .Initialize(File.ReadAllText(FixturePath));
+                secondHost.AddComponent<LoaderOnlyVizzyEditor>()
+                    .Initialize(File.ReadAllText(FixturePath));
+
+                RuntimeCompatibilityResult compatibility = null;
+                Assert.DoesNotThrow(() =>
+                    compatibility = new VizzyRuntimeAdapter().Compatibility);
+
+                Assert.That(
+                    compatibility.Kind,
+                    Is.EqualTo(RuntimeCompatibilityKind.AmbiguousContract));
+                Assert.That(compatibility.CanModify, Is.False);
+                Assert.That(compatibility.MemberSummaries.Count, Is.EqualTo(2));
+            }
+            finally
+            {
+                Object.DestroyImmediate(secondHost);
+                Object.DestroyImmediate(firstHost);
+            }
+        }
+
+        [Test]
         public void Stock_program_loader_failure_restores_the_previous_program()
         {
             var host = new GameObject("Fail Once Vizzy Editor");

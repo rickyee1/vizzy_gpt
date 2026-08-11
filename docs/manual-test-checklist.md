@@ -77,23 +77,24 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Compatibility And Removal
 
-- [ ] Run the compatibility fixtures for Compatible, EditorUnavailable, and AmbiguousContract. Expected: incompatible states retain Ask, hide Modify/Preview, and show only type/member diagnostics.
+- [x] Run the compatibility fixtures for Compatible, EditorUnavailable, AmbiguousContract, an inactive duplicate editor, and multiple active editors. Expected: inactive instances are ignored; true ambiguity retains Ask, hides Modify/Preview, and reports distinct type/member/instance diagnostics without throwing.
 - [ ] Disable VizzyGPT, restart Juno, and confirm the saved stock Vizzy program still loads and runs.
 - [ ] Re-enable VizzyGPT and confirm settings and saved programs remain intact.
 
 ## Evidence
 
 - Automated Core results: `524/524` passed on 2026-08-11.
-- Automated Unity EditMode results: `154/154` passed on 2026-08-11.
-- Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
-- Final package build log: `artifacts/unity-package-final-clean.log`.
+- Automated Unity EditMode results: `156/156` passed on 2026-08-11.
+- Automated result files: `artifacts/editor-probe-final-results.xml`, `artifacts/editor-probe-final.log`.
+- Final package build log: `artifacts/unity-package-editor-probe-fix.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/11/2026 11:29:35 AM`.
-- Final package size: `16,812,619` bytes.
-- Final package hash: `AAB76B1AF5923DC2B6B5DD9813A47A9426BA72A9998D7063C09697CE813403F6`.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/11/2026 1:24:58 PM`.
+- Final package size: `16,813,131` bytes.
+- Final package hash: `CAAD7BC98DC9EB2326A36E17D466BC1CA33449E9A1661FCD6E0956D9D5098418`.
 - Final load smoke: the rebuilt package loaded on Juno 1.4.104.0c and the current `Player.log` contained no VizzyGPT error or exception. The existing `CylinderTank`/`PartConnection` craft warnings are unrelated to VizzyGPT.
+- Editor-probe regression coverage: an inactive loader-only editor is excluded from candidate selection, while multiple active candidates return a non-modifiable ambiguity result instead of throwing during panel mount.
 - Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
 - Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return an automatic-landing patch in either attempt, so that larger patch scenario remains unverified rather than passed.
 - Live throttle acceptance on Juno 1.4.104.0c: Preview displayed one `SetInput` insertion with `throttle=0.5`; Cancel left the canvas unchanged; Apply followed by native save, leaving Vizzy, and reopening Vizzy restored the node.

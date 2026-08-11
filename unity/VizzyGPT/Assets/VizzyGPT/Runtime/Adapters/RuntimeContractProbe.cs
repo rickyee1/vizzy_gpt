@@ -86,6 +86,11 @@ namespace VizzyGPT.Runtime.Adapters
                 var programLoadMethod = FindPublicProgramLoadMethod(type);
                 foreach (var instance in FindInstances(type))
                 {
+                    if (!IsActiveSceneComponent(instance))
+                    {
+                        continue;
+                    }
+
                     if (programLoadMethod != null)
                     {
                         candidates.Add(new RuntimeContract(
@@ -115,7 +120,7 @@ namespace VizzyGPT.Runtime.Adapters
             if (candidates.Count > 1)
             {
                 compatibility = RuntimeCompatibilityResult.AmbiguousContract(
-                    candidates.Select(Summarize).ToArray());
+                    candidates.Select(SummarizeInstance).ToArray());
                 return null;
             }
 
@@ -131,6 +136,11 @@ namespace VizzyGPT.Runtime.Adapters
         private static string Summarize(RuntimeContract contract)
         {
             return contract.Instance.GetType().FullName + "." + contract.FlightProgramMember.Name;
+        }
+
+        private static string SummarizeInstance(RuntimeContract contract)
+        {
+            return Summarize(contract) + "@" + contract.Instance.GetInstanceID();
         }
 
         internal bool TryFindFlightProgramFallback(out UnityEngine.Object instance, out MemberInfo member)
@@ -320,6 +330,13 @@ namespace VizzyGPT.Runtime.Adapters
                     yield return instance;
                 }
             }
+        }
+
+        private static bool IsActiveSceneComponent(UnityEngine.Object instance)
+        {
+            return instance is Component component &&
+                component.gameObject.scene.IsValid() &&
+                component.gameObject.activeInHierarchy;
         }
 
         private bool TryFindRefreshContract(
