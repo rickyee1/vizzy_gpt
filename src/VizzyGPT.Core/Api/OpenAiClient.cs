@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -27,6 +28,7 @@ namespace VizzyGPT.Core.Api
     public sealed class OpenAiClient
     {
         private const string EnvelopeName = "vizzy_patch_envelope";
+        private const int MaximumTransientAttempts = 2;
         private const string CanonicalSelectorPathPattern =
             "^/Program\\[0\\](?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$";
         private const int MaximumDiagnosticLength = 512;
@@ -163,31 +165,96 @@ namespace VizzyGPT.Core.Api
                 ["Authorization"] = "Bearer " + request.ApiKey,
                 ["Content-Type"] = "application/json"
             };
-            var transportRequest = new HttpTransportRequest(
-                "POST",
-                uri,
-                headers,
-                Encoding.UTF8.GetBytes(payload.ToString(Formatting.None)),
-                request.Timeout);
+            var body = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+            var elapsed = Stopwatch.StartNew();
+            var attemptTimeout = request.Timeout;
+            for (var attempt = 0; attempt < MaximumTransientAttempts; attempt++)
+            {
+                var transportRequest = new HttpTransportRequest(
+                    "POST",
+                    uri,
+                    headers,
+                    body,
+                    attemptTimeout);
+                HttpTransportResponse response;
+                try
+                {
+                    response = await transport.SendAsync(transportRequest, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("The AI transport returned a null response.");
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (TimeoutException)
+                {
+                    throw;
+                }
+                catch (TransientAiTransportException exception)
+                {
+                    if (attempt == 0 &&
+                        TryGetRetryTimeout(request.Timeout, elapsed.Elapsed, out attemptTimeout))
+                    {
+                        continue;
+                    }
 
-            try
-            {
-                return await transport.SendAsync(transportRequest, cancellationToken).ConfigureAwait(false)
-                    ?? throw new InvalidOperationException("The AI transport returned a null response.");
+                    var retryDescription = attempt > 0 ? " after one automatic retry" : string.Empty;
+                    throw new InvalidOperationException(
+                        "AI transport failed" + retryDescription + ": " +
+                        MakeDisplaySafe(exception.Message, request.ApiKey));
+                }
+                catch (Exception exception)
+                {
+                    throw new InvalidOperationException(
+                        "AI transport failed: " + MakeDisplaySafe(exception.Message, request.ApiKey));
+                }
+
+                if (IsTransientHttpStatus(response.StatusCode))
+                {
+                    if (attempt == 0 &&
+                        TryGetRetryTimeout(request.Timeout, elapsed.Elapsed, out attemptTimeout))
+                    {
+                        continue;
+                    }
+
+                    if (attempt > 0)
+                    {
+                        EnsureSuccess(response, request.ApiKey, afterAutomaticRetry: true);
+                    }
+                }
+
+                return response;
             }
-            catch (OperationCanceledException)
+
+            throw new InvalidOperationException("The AI transport retry loop ended unexpectedly.");
+        }
+
+        private static bool TryGetRetryTimeout(
+            TimeSpan totalTimeout,
+            TimeSpan elapsed,
+            out TimeSpan retryTimeout)
+        {
+            var wholeSeconds = Math.Floor((totalTimeout - elapsed).TotalSeconds);
+            if (wholeSeconds < 1)
             {
-                throw;
+                retryTimeout = TimeSpan.Zero;
+                return false;
             }
-            catch (TimeoutException)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                throw new InvalidOperationException(
-                    "AI transport failed: " + MakeDisplaySafe(exception.Message, request.ApiKey));
-            }
+
+            retryTimeout = TimeSpan.FromSeconds(wholeSeconds);
+            return true;
+        }
+
+        private static bool IsTransientHttpStatus(int statusCode)
+        {
+            return statusCode == 500 ||
+                statusCode == 502 ||
+                statusCode == 503 ||
+                statusCode == 504 ||
+                statusCode == 520 ||
+                statusCode == 522 ||
+                statusCode == 523 ||
+                statusCode == 524;
         }
 
         private static JObject CreateResponsesPayload(
@@ -220,6 +287,7 @@ namespace VizzyGPT.Core.Api
             var payload = new JObject
             {
                 ["model"] = model,
+                ["stream"] = true,
                 ["messages"] = new JArray
                 {
                     new JObject
@@ -423,6 +491,11 @@ namespace VizzyGPT.Core.Api
         {
             try
             {
+                if (endpointMode == ApiMode.ChatCompletions && LooksLikeEventStream(responseBody))
+                {
+                    return ExtractChatStreamResponse(responseBody);
+                }
+
                 var root = ParseJsonObject(responseBody, "API response");
                 if (endpointMode == ApiMode.Responses)
                 {
@@ -507,6 +580,127 @@ namespace VizzyGPT.Core.Api
                 throw new InvalidOperationException(
                     "Invalid OpenAI-compatible response wrapper: " +
                     MakeDisplaySafe(exception.Message + " Body: " + responseBody, apiKey));
+            }
+        }
+
+        private static bool LooksLikeEventStream(string responseBody)
+        {
+            var value = responseBody.TrimStart();
+            return value.StartsWith("data:", StringComparison.Ordinal) ||
+                value.StartsWith(":", StringComparison.Ordinal) ||
+                value.StartsWith("event:", StringComparison.Ordinal);
+        }
+
+        private static ModelExtraction ExtractChatStreamResponse(string responseBody)
+        {
+            var content = new StringBuilder();
+            var refusal = new StringBuilder();
+            var reasoningSummary = new StringBuilder();
+            int? inputTokens = null;
+            int? outputTokens = null;
+            var sawEvent = false;
+
+            foreach (var eventData in ReadServerSentEventData(responseBody))
+            {
+                if (string.Equals(eventData.Trim(), "[DONE]", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                sawEvent = true;
+                var root = ParseJsonObject(eventData, "Chat Completions stream event");
+                if (root["error"] != null)
+                {
+                    throw new JsonSerializationException("Chat Completions stream returned an error event.");
+                }
+
+                if (root["usage"] is JObject usage)
+                {
+                    inputTokens = ReadNonNegativeInteger(usage["prompt_tokens"]) ?? inputTokens;
+                    outputTokens = ReadNonNegativeInteger(usage["completion_tokens"]) ?? outputTokens;
+                }
+
+                if (!(root["choices"] is JArray choices) ||
+                    !(choices.FirstOrDefault() is JObject choice) ||
+                    !(choice["delta"] is JObject delta))
+                {
+                    continue;
+                }
+
+                if (delta["content"]?.Type == JTokenType.String)
+                {
+                    content.Append(delta["content"]!.Value<string>());
+                }
+
+                if (delta["refusal"]?.Type == JTokenType.String)
+                {
+                    refusal.Append(delta["refusal"]!.Value<string>());
+                }
+
+                if (delta["reasoning_summary"]?.Type == JTokenType.String)
+                {
+                    reasoningSummary.Append(delta["reasoning_summary"]!.Value<string>());
+                }
+            }
+
+            if (!sawEvent)
+            {
+                throw new JsonSerializationException("Chat Completions stream did not contain any data events.");
+            }
+
+            var metadata = new AiResponseMetadata(
+                reasoningSummary.Length == 0 ? null : reasoningSummary.ToString(),
+                inputTokens,
+                outputTokens,
+                wasSchemaRepair: false);
+            if (refusal.Length > 0)
+            {
+                return ModelExtraction.Refused(refusal.ToString(), metadata);
+            }
+
+            if (content.Length == 0)
+            {
+                throw new JsonSerializationException(
+                    "Chat Completions stream did not contain assistant content or refusal data.");
+            }
+
+            return ModelExtraction.Output(content.ToString(), metadata);
+        }
+
+        private static IEnumerable<string> ReadServerSentEventData(string responseBody)
+        {
+            using (var reader = new StringReader(responseBody))
+            {
+                var dataLines = new List<string>();
+                string? line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (line.Length == 0)
+                    {
+                        if (dataLines.Count > 0)
+                        {
+                            yield return string.Join("\n", dataLines);
+                            dataLines.Clear();
+                        }
+
+                        continue;
+                    }
+
+                    if (!line.StartsWith("data:", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var value = line.Substring("data:".Length);
+                    dataLines.Add(value.StartsWith(" ", StringComparison.Ordinal)
+                        ? value.Substring(1)
+                        : value);
+                }
+
+                if (dataLines.Count > 0)
+                {
+                    yield return string.Join("\n", dataLines);
+                }
             }
         }
 
@@ -732,7 +926,10 @@ namespace VizzyGPT.Core.Api
             }
         }
 
-        private static void EnsureSuccess(HttpTransportResponse response, string apiKey)
+        private static void EnsureSuccess(
+            HttpTransportResponse response,
+            string apiKey,
+            bool afterAutomaticRetry = false)
         {
             if (response.StatusCode >= 200 && response.StatusCode <= 299)
             {
@@ -742,7 +939,9 @@ namespace VizzyGPT.Core.Api
             var body = MakeDisplaySafe(DecodeBody(response), apiKey);
             throw new OpenAiApiException(
                 response.StatusCode,
-                "OpenAI-compatible API request failed with HTTP " +
+                "OpenAI-compatible API request failed" +
+                (afterAutomaticRetry ? " after one automatic retry" : string.Empty) +
+                " with HTTP " +
                 response.StatusCode.ToString(CultureInfo.InvariantCulture) + ": " + body);
         }
 

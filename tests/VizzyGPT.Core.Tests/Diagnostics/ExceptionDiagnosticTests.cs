@@ -155,6 +155,21 @@ namespace VizzyGPT.Core.Tests.Diagnostics
             Assert.That(diagnostic.DisplayMessage, Does.Contain("[REDACTED REQUEST CONTEXT]"));
         }
 
+        [Test]
+        public void From_preserves_benign_no_response_transport_reason()
+        {
+            const string message =
+                "AI transport failed: HTTP request did not receive a response: Empty reply from server";
+
+            var diagnostic = ExceptionDiagnostic.From(
+                new InvalidOperationException(message),
+                "WaitingForModel");
+
+            Assert.That(diagnostic.DisplayMessage, Is.EqualTo(message));
+            Assert.That(diagnostic.TechnicalDetails, Does.EndWith(message));
+            Assert.That(diagnostic.DisplayMessage, Does.Not.Contain("[REDACTED REQUEST CONTEXT]"));
+        }
+
         private static void AssertSanitized(string value)
         {
             Assert.That(value, Does.Not.Contain("basic-secret"));

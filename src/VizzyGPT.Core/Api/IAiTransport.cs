@@ -14,6 +14,14 @@ namespace VizzyGPT.Core.Api
             CancellationToken cancellationToken);
     }
 
+    public sealed class TransientAiTransportException : Exception
+    {
+        public TransientAiTransportException(string message)
+            : base(message)
+        {
+        }
+    }
+
     public sealed class HttpTransportRequest
     {
         private readonly byte[] body;

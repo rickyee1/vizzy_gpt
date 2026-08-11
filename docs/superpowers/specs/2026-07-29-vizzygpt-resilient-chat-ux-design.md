@@ -14,6 +14,11 @@ that can mutate the three required root containers, runtime exceptions will be
 unwrapped into actionable diagnostics, and one automatic repair request will
 be attempted after a generated patch fails validation.
 
+Chat Completions will use Server-Sent Events so long-running responses keep
+the connection active. A typed transient transport failure or selected
+temporary gateway status may be retried once without resetting the configured
+timeout budget.
+
 ## Goals
 
 - Prevent model-generated patches from adding, deleting, replacing, or moving
@@ -32,12 +37,14 @@ be attempted after a generated patch fails validation.
 - Persist the most recent 50 messages for each program across game restarts.
 - Keep Chinese input, response, status, reasoning, and error text rendered with
   the bundled CJK font.
+- Keep long Chat Completions requests active through streamed responses and
+  make one bounded retry for explicitly transient failures.
 
 ## Non-Goals
 
 - Do not display or infer hidden chain-of-thought.
 - Do not synthesize fake reasoning text when an endpoint provides none.
-- Do not require streaming or Server-Sent Events in this version.
+- Do not change the Responses API request from its existing non-stream contract.
 - Do not allow the model to bypass local validation after a failed retry.
 - Do not store API keys, authorization headers, complete program XML, complete
   request context, or raw generated patches in conversation history.
@@ -77,9 +84,11 @@ message and patch:
 For the Responses API, the parser will accept standard reasoning summary
 content associated with reasoning output items. Unsupported or unknown output
 items remain ignored unless they invalidate the existing assistant output
-contract. For Chat Completions, no reasoning is assumed. A compatible
-non-standard reasoning field may be accepted only when it is a plain string and
-does not alter the existing assistant content requirements.
+contract. For Chat Completions, the request uses streaming and the parser
+accepts both Server-Sent Events and a non-stream JSON fallback from compatible
+relays. No reasoning is assumed. A compatible `reasoning_summary` field may be
+accepted only when it is a plain string and does not alter the existing
+assistant content requirements. Raw `reasoning_content` is ignored.
 
 Raw hidden reasoning tokens are never requested for display and never written
 to disk. If no reasoning summary exists, the collapsed reasoning row exposes
@@ -124,7 +133,16 @@ cannot become a safe preview because of:
 
 Transport errors, authentication failures, cancellation, timeouts, stale
 program hashes, editor unavailability, backup failures, and Apply failures do
-not trigger a repair request.
+not trigger a schema-repair request.
+
+Transport retry is a separate API-client concern. A typed transient transport
+failure or HTTP 500, 502, 503, 504, 520, 522, 523, or 524 is retried at most
+once. The second attempt receives only the whole seconds remaining from the
+original endpoint timeout. Authentication failures, HTTP 429, cancellation,
+explicit timeout exceptions, and arbitrary client exceptions are not retried.
+If the second attempt fails, the diagnostic states that one automatic retry
+already occurred. Because the first request may have reached the provider, a
+retry can still duplicate provider-side usage.
 
 The repair request contains:
 
@@ -245,7 +263,8 @@ request context, API keys, authorization values, and raw HTTP response bodies.
 
 - Responses endpoints with reasoning summaries show the summary.
 - Responses endpoints without summaries show local stage timings only.
-- Chat Completions endpoints continue to work without reasoning metadata.
+- Chat Completions endpoints support streamed SSE output and non-stream JSON
+  fallback without requiring reasoning metadata.
 - Existing OpenAI-compatible endpoint fallback behavior remains unchanged.
 - Existing editor and flight workflows remain available when conversation
   persistence cannot be read or written.
@@ -260,7 +279,12 @@ Core tests will cover:
 - Ordinary descendant operations remain valid.
 - Repair context uses the original base hash and a sanitized structured error.
 - Responses reasoning summaries are normalized.
-- Chat Completions without reasoning remain valid.
+- Streamed Chat Completions content, optional summary/usage, and `[DONE]` are
+  normalized; raw reasoning content is ignored.
+- Typed transient transport failures and temporary gateway statuses retry once
+  within the original timeout budget.
+- Authentication, rate-limit, cancellation, explicit timeout, and arbitrary
+  client failures do not automatically retry.
 - Conversation serialization enforces the 50-message limit.
 - Sensitive request fields and raw program or patch content are absent from
   persisted conversation JSON.
@@ -271,7 +295,8 @@ Unity EditMode tests will cover:
 - Exactly one automatic repair attempt occurs for repairable Modify failures.
 - A second invalid result ends in Error without calling the editor mutation
   adapter.
-- Non-repairable transport, stale-hash, and cancellation failures do not retry.
+- Non-repairable stale-hash and cancellation failures do not trigger schema
+  repair; transport retries remain confined to the API-client policy above.
 - Progress stages and elapsed duration reach the render model.
 - Wrapped reflection exceptions render the root diagnostic.
 - Message rows, disclosures, composer actions, and preview actions bind to

@@ -1,6 +1,6 @@
 # VizzyGPT 0.1.0 Manual Test Checklist
 
-Target: Juno: New Origins 1.4.104.0c on Windows 11
+Target: Juno: New Origins 1.4.105.0c on Windows 11
 
 Mod artifact: `VizzyGPT.sr2-mod`
 Test program: the saved craft program containing the existing `while true` control loop.
@@ -37,7 +37,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Request a Modify patch with a Chinese summary and open Preview. Expected: summary and warning content are visible.
 - [x] Close and reopen the panel. Expected: no duplicate font warning appears in `Player.log`.
 - [x] Confirm English labels and buttons retain their existing appearance.
-- Result: passed in Juno 1.4.104.0c with the final installed package.
+- Result: passed in Juno 1.4.105.0c with the installed package.
 
 ## Editor Modify
 
@@ -68,10 +68,15 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Failure Paths
 
-- [ ] Return HTTP 401 from the loopback server. Expected: retryable authentication status and no program mutation.
-- [ ] Return HTTP 429. Expected: retryable rate-limit status and no program mutation.
+- [ ] Return HTTP 401 from the loopback server. Expected: authentication status, no automatic transport retry, and no program mutation.
+- [ ] Return HTTP 429. Expected: rate-limit status, no automatic transport retry, and no program mutation.
 - [ ] Stop the loopback server. Expected: network failure status and no program mutation.
 - [ ] Delay the loopback response beyond the configured timeout. Expected: timeout status and no program mutation.
+- [x] Return HTTP 500, 502, 503, 504, 520, 522, 523, or 524 once and then a valid response in Core fixtures. Expected: exactly one automatic retry succeeds within the original timeout budget.
+- [x] Throw a typed transient transport failure once and then return a valid response in Core fixtures. Expected: the retry receives only the remaining whole-second timeout budget.
+- [x] Return or throw a transient failure twice in Core fixtures. Expected: exactly two total attempts and an error that states one automatic retry already occurred.
+- [x] Parse a Chat Completions SSE fixture. Expected: streamed content and provider reasoning summary are reassembled, usage is retained when supplied, and raw `reasoning_content` is ignored.
+- [x] Normalize `HTTP request did not receive a response: Empty reply from server`. Expected: the benign reason remains visible and is not replaced by `[REDACTED REQUEST CONTEXT]`.
 - [ ] Cancel an active request. Expected: `Request cancelled.` and no program mutation.
 - [ ] Return malformed model JSON twice. Expected: one repair request, then a non-applicable error with Preview hidden.
 - [ ] Confirm displayed diagnostics and logs contain no API key, bearer token, stack trace, or raw secret.
@@ -84,20 +89,21 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `524/524` passed on 2026-08-11.
-- Automated Unity EditMode results: `156/156` passed on 2026-08-11.
-- Automated result files: `artifacts/editor-probe-final-results.xml`, `artifacts/editor-probe-final.log`.
-- Final package build log: `artifacts/unity-package-editor-probe-fix.log`.
+- Automated Core results: `535/535` passed on 2026-08-12.
+- Automated Unity EditMode results: `156/156` passed on 2026-08-12.
+- Automated Unity result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
+- Final package build log: `artifacts/unity-package-stream-retry.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/11/2026 1:24:58 PM`.
-- Final package size: `16,813,131` bytes.
-- Final package hash: `CAAD7BC98DC9EB2326A36E17D466BC1CA33449E9A1661FCD6E0956D9D5098418`.
-- Final load smoke: the rebuilt package loaded on Juno 1.4.104.0c and the current `Player.log` contained no VizzyGPT error or exception. The existing `CylinderTank`/`PartConnection` craft warnings are unrelated to VizzyGPT.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/11/2026 5:39:26 PM`.
+- Final package size: `16,818,251` bytes.
+- Final package hash: `B4D6BC1F93EA7C9935E6AC3BEB8E9F17ACC7643AF4E34DE0A9E86E98D013065C`.
+- Final load smoke: the rebuilt package loaded on Juno 1.4.105.0c and the current `Player.log` contained no VizzyGPT error or exception. The existing `CylinderTank`/`PartConnection` craft warnings are unrelated to VizzyGPT.
 - Final editor mount acceptance: after entering the Vizzy editor, `Player.log` recorded `VizzyGPT resolved Vizzy runtime contract: Assets.Scripts.Vizzy.UI.VizzyUIScript.FlightProgram` followed by successful bundled CJK glyph validation. No `AmbiguousContract`, `ArgumentException`, or `ConfigureMountedPanel` failure recurred.
 - Editor-probe regression coverage: an inactive loader-only editor is excluded from candidate selection, while multiple active candidates return a non-modifiable ambiguity result instead of throwing during panel mount.
-- Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
-- Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return an automatic-landing patch in either attempt, so that larger patch scenario remains unverified rather than passed.
-- Live throttle acceptance on Juno 1.4.104.0c: Preview displayed one `SetInput` insertion with `throttle=0.5`; Cancel left the canvas unchanged; Apply followed by native save, leaving Vizzy, and reopening Vizzy restored the node.
+- Live resilient-chat acceptance on Juno 1.4.105.0c before the stream-retry rebuild: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
+- Live selector-schema follow-up on Juno 1.4.105.0c before the stream-retry rebuild: the package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return an automatic-landing patch in either attempt, so that larger patch scenario remains unverified rather than passed.
+- Live throttle acceptance on Juno 1.4.105.0c before the stream-retry rebuild: Preview displayed one `SetInput` insertion with `throttle=0.5`; Cancel left the canvas unchanged; Apply followed by native save, leaving Vizzy, and reopening Vizzy restored the node.
+- Stream-retry live follow-up: the final package load is verified, but the original Synapse prompt `你能看懂我这个程序吗，bl表示back left，指的后面左边的舵面，以此类推` has not yet been resent with this package because Computer Use could not enumerate the desktop window after restart. Do not record this scenario as passed until a response or bounded retry result is observed.
 - Conversation persistence evidence: `UserData/VizzyGPT/Conversations/c397d56845a14713ae6ddbda84714664.json` remained valid UTF-8 JSON with 20 messages, and the updated program hash was linked to that conversation in `index.json`.

@@ -296,6 +296,7 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(request.Uri, Is.EqualTo(new Uri("https://api.example.test/openai/v1/chat/completions")));
             var payload = ParseBody(request);
             Assert.That((string?)payload["model"], Is.EqualTo("gpt-test"));
+            Assert.That((bool?)payload["stream"], Is.True);
             var messages = (JArray)payload["messages"]!;
             Assert.That(messages, Has.Count.GreaterThanOrEqualTo(2));
             Assert.That(messages.Select(message => (string?)message!["role"]), Does.Contain("system"));
@@ -311,6 +312,55 @@ namespace VizzyGPT.Core.Tests.Api
 
             AssertValidResponse(result, "Changed pitch");
             Assert.That(result.Metadata.ReasoningSummary, Is.Null);
+        }
+
+        [Test]
+        public async Task ChatCompletions_parses_streamed_content_summary_and_usage()
+        {
+            var output = ValidEnvelope("Streamed pitch change");
+            var midpoint = output.Length / 2;
+            var body = string.Join("\n\n", new[]
+            {
+                ": keep-alive",
+                "data: " + ChatChunk(new JObject
+                {
+                    ["role"] = "assistant",
+                    ["reasoning_summary"] = "Checked control ",
+                    ["reasoning_content"] = "must-not-be-exposed"
+                }),
+                "data: " + ChatChunk(new JObject
+                {
+                    ["reasoning_summary"] = "branches.",
+                    ["content"] = output.Substring(0, midpoint)
+                }),
+                "data: " + ChatChunk(new JObject
+                {
+                    ["content"] = output.Substring(midpoint)
+                }),
+                "data: " + new JObject
+                {
+                    ["choices"] = new JArray(),
+                    ["usage"] = new JObject
+                    {
+                        ["prompt_tokens"] = 80,
+                        ["completion_tokens"] = 24
+                    }
+                }.ToString(Formatting.None),
+                "data: [DONE]",
+                string.Empty
+            });
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.ChatCompletions),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Streamed pitch change");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Checked control branches."));
+            Assert.That(result.Metadata.ReasoningSummary, Does.Not.Contain("must-not-be-exposed"));
+            Assert.That(result.Metadata.InputTokens, Is.EqualTo(80));
+            Assert.That(result.Metadata.OutputTokens, Is.EqualTo(24));
         }
 
         [Test]
@@ -574,8 +624,6 @@ namespace VizzyGPT.Core.Tests.Api
 
         [TestCase(401)]
         [TestCase(429)]
-        [TestCase(500)]
-        [TestCase(503)]
         public void Auto_does_not_fallback_or_retry_other_http_failures(int statusCode)
         {
             var transport = new FakeTransport();
@@ -586,6 +634,86 @@ namespace VizzyGPT.Core.Tests.Api
 
             Assert.That(exception!.StatusCode, Is.EqualTo(statusCode));
             Assert.That(transport.Requests, Has.Count.EqualTo(1));
+        }
+
+        [TestCase(500)]
+        [TestCase(502)]
+        [TestCase(503)]
+        [TestCase(504)]
+        [TestCase(520)]
+        [TestCase(522)]
+        [TestCase(523)]
+        [TestCase(524)]
+        public async Task Transient_http_failure_retries_once_within_the_original_timeout(int statusCode)
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(statusCode, ErrorBody("Temporary upstream failure", "upstream_failed")));
+            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Retry succeeded"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Retry succeeded");
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(
+                transport.Requests[1].Timeout,
+                Is.GreaterThan(TimeSpan.Zero).And.LessThanOrEqualTo(transport.Requests[0].Timeout));
+        }
+
+        [Test]
+        public void Repeated_transient_http_failure_stops_after_one_retry()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(502, ErrorBody("First upstream failure", "upstream_failed")));
+            transport.Enqueue(Response(524, ErrorBody("Second upstream failure", "timeout")));
+
+            var exception = Assert.ThrowsAsync<OpenAiApiException>(
+                async () => await new OpenAiClient(transport).SendAsync(
+                    Request(ApiMode.Responses),
+                    CancellationToken.None));
+
+            Assert.That(exception!.StatusCode, Is.EqualTo(524));
+            Assert.That(exception.Message, Does.Contain("after one automatic retry"));
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+        }
+
+        [Test]
+        public async Task Transient_transport_failure_retries_once_with_a_reduced_timeout_budget()
+        {
+            var transport = new FakeTransport();
+            transport.EnqueueExceptionAfter(
+                TimeSpan.FromMilliseconds(20),
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Transport retry succeeded"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Transport retry succeeded");
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(transport.Requests[1].Timeout, Is.LessThan(transport.Requests[0].Timeout));
+            Assert.That(transport.Requests[1].Timeout, Is.GreaterThan(TimeSpan.Zero));
+        }
+
+        [Test]
+        public void Repeated_transient_transport_failure_reports_the_retry_and_stops()
+        {
+            var transport = new FakeTransport();
+            transport.EnqueueException(
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+            transport.EnqueueException(
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+
+            var exception = Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await new OpenAiClient(transport).SendAsync(
+                    Request(ApiMode.Responses),
+                    CancellationToken.None));
+
+            Assert.That(exception!.Message, Does.Contain("after one automatic retry"));
+            Assert.That(exception.Message, Does.Contain("closed the connection"));
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
         }
 
         [Test]
@@ -1299,6 +1427,19 @@ namespace VizzyGPT.Core.Tests.Api
             return ChatBodyObject(output).ToString(Formatting.None);
         }
 
+        private static string ChatChunk(JObject delta)
+        {
+            return new JObject
+            {
+                ["choices"] = new JArray(new JObject
+                {
+                    ["index"] = 0,
+                    ["delta"] = delta,
+                    ["finish_reason"] = JValue.CreateNull()
+                })
+            }.ToString(Formatting.None);
+        }
+
         private static JObject ChatBodyObject(string output)
         {
             return new JObject
@@ -1381,6 +1522,15 @@ namespace VizzyGPT.Core.Tests.Api
             public void EnqueueException(Exception exception)
             {
                 responses.Enqueue(() => throw exception);
+            }
+
+            public void EnqueueExceptionAfter(TimeSpan delay, Exception exception)
+            {
+                responses.Enqueue(() =>
+                {
+                    Thread.Sleep(delay);
+                    throw exception;
+                });
             }
 
             public Task<HttpTransportResponse> SendAsync(

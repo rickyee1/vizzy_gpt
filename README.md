@@ -2,7 +2,7 @@
 
 VizzyGPT is a Juno: New Origins mod that connects the Vizzy editor and flight scene to an OpenAI-compatible API. It reads the structured Vizzy program, sends bounded context, validates typed patch operations locally, and requires a preview before any editor change.
 
-Target: Juno 1.4.104.0c on Windows 11.
+Target: Juno 1.4.105.0c on Windows 11.
 
 ## Install
 
@@ -31,6 +31,7 @@ Plain HTTP is accepted only for loopback hosts. The API key is protected with Wi
 - **Ask** sends a read-only normalized program context. In flight it also includes bounded telemetry and recent logs.
 - **Modify** requests a typed patch, validates it locally, and opens a preview before Apply.
 - Ask and Modify keep separate persistent conversations. Completed requests show elapsed time and expandable reasoning summaries when the provider returns one.
+- Chat Completions requests use streamed responses. A transient connection closure or temporary gateway HTTP failure is retried once within the original timeout budget; authentication, rate-limit, cancellation, and explicit timeout failures are not automatically retried.
 - Invalid Modify output gets one constrained repair attempt. If repair also fails, the patch remains non-applicable and technical details can be expanded from the error message.
 - **Undo** restores the pre-apply program after another validated backup.
 - **Flight Modify** saves a pending change without replacing the running program. Return to Vizzy to rebase, preview, and apply it.
@@ -58,4 +59,4 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Unity.ps1
 
 The Unity project is under `unity/VizzyGPT`. Core code and tests are under `src` and `tests`. Manual release coverage is tracked in `docs/manual-test-checklist.md`.
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-12.

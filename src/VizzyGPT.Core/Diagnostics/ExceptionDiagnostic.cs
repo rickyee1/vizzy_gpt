@@ -35,7 +35,7 @@ namespace VizzyGPT.Core.Diagnostics
             RegexOptions.CultureInvariant);
 
         private static readonly Regex RequestContext = new Regex(
-            @"(?is)\b(?:request|response)(?:\s+(?:context|details|headers?|body))?\s*[:=]\s*.*",
+            @"(?is)(?<!receive a )\b(?:request|response)(?:\s+(?:context|details|headers?|body))?\s*[:=]\s*.*",
             RegexOptions.CultureInvariant);
 
         private static readonly Regex PlaintextBody = new Regex(

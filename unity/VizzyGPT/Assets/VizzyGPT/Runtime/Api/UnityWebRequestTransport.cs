@@ -47,14 +47,62 @@ namespace VizzyGPT.Runtime.Api
                 cancellationToken.ThrowIfCancellationRequested();
                 if (webRequest.responseCode < 100)
                 {
-                    throw new InvalidOperationException(
-                        "HTTP request did not receive a response: " + (webRequest.error ?? "unknown error"));
+                    throw CreateTransientFailure(webRequest.error);
+                }
+
+                if (webRequest.result == UnityWebRequest.Result.ConnectionError ||
+                    webRequest.result == UnityWebRequest.Result.DataProcessingError)
+                {
+                    throw CreateTransientFailure(webRequest.error);
                 }
 
                 return new HttpTransportResponse(
                     checked((int)webRequest.responseCode),
                     webRequest.downloadHandler.data ?? Array.Empty<byte>());
             }
+        }
+
+        private static TransientAiTransportException CreateTransientFailure(string error)
+        {
+            return new TransientAiTransportException(
+                "The AI service closed the connection before returning a complete HTTP response (" +
+                DescribeError(error) + ").");
+        }
+
+        private static string DescribeError(string error)
+        {
+            if (string.IsNullOrWhiteSpace(error))
+            {
+                return "network connection ended unexpectedly";
+            }
+
+            var value = error.ToLowerInvariant();
+            if (value.Contains("empty reply"))
+            {
+                return "empty reply from server";
+            }
+
+            if (value.Contains("timed out") || value.Contains("timeout"))
+            {
+                return "connection timed out";
+            }
+
+            if (value.Contains("resolve") || value.Contains("dns"))
+            {
+                return "DNS lookup failed";
+            }
+
+            if (value.Contains("certificate") || value.Contains("ssl") || value.Contains("tls"))
+            {
+                return "TLS certificate validation failed";
+            }
+
+            if (value.Contains("reset"))
+            {
+                return "connection reset by server";
+            }
+
+            return "network connection ended unexpectedly";
         }
 
         private static int ToTimeoutSeconds(TimeSpan timeout)
