@@ -9,7 +9,13 @@ namespace VizzyGPT.Core.Validation
 {
     public sealed class VizzyProgramValidator
     {
-        private static readonly string[] RequiredContainers =
+        private static readonly string[] SingletonRootContainers =
+        {
+            "Variables",
+            "Expressions"
+        };
+
+        private static readonly string[] StructuralContainers =
         {
             "Variables",
             "Instructions",
@@ -54,7 +60,7 @@ namespace VizzyGPT.Core.Validation
             VizzyNodeCatalog catalog,
             ICollection<ValidationIssue> issues)
         {
-            foreach (var requiredContainer in RequiredContainers)
+            foreach (var requiredContainer in SingletonRootContainers)
             {
                 var count = document.Root.Elements()
                     .Count(element => HasUnqualifiedName(element, requiredContainer));
@@ -184,7 +190,7 @@ namespace VizzyGPT.Core.Validation
             var reported = new HashSet<XElement>();
 
             foreach (var container in document.Root.DescendantsAndSelf()
-                .Where(element => RequiredContainers.Contains(element.Name.LocalName, StringComparer.Ordinal)))
+                .Where(element => StructuralContainers.Contains(element.Name.LocalName, StringComparer.Ordinal)))
             {
                 var parent = container.Parent;
                 var validParent = HasUnqualifiedName(container, "Instructions")

@@ -1085,7 +1085,8 @@ namespace VizzyGPT.Runtime.Ui
                 "Path: " + (failure.Path ?? "root") + "\n" +
                 "Error: " + SanitizeTechnicalDetails(failure.Message, RequestStage.RepairingPatch) + "\n" +
                 "Return a complete replacement patch against original base hash " + originalHash + ".\n" +
-                "Do not add, remove, replace, or move direct Program structural containers.\n\n" +
+                "Do not remove, replace, or move direct Program structural containers. " +
+                "Only insert a direct Instructions container when creating a new top-level stack.\n\n" +
                 VizzyModelSkill.BuildRepairReference(catalog, failure.Code, failure.Path, failure.Message);
         }
 

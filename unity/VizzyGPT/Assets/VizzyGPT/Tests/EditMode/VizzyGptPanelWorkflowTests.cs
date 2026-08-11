@@ -630,7 +630,7 @@ namespace VizzyGPT.Tests.EditMode
         public void Modify_rejects_an_invalid_source_program_before_transport()
         {
             var sendCalls = 0;
-            var invalidSource = "<Program><Variables /><Expressions /></Program>";
+            var invalidSource = "<Program><Variables /></Program>";
             var adapter = new FakeAdapter(invalidSource);
             using var workflow = CreateWorkflow(adapter, (_, __) =>
             {
@@ -646,6 +646,30 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
             Assert.That(workflow.StatusText, Does.Contain("Current Vizzy program is not safe to modify"));
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Modify_accepts_an_empty_program_and_previews_a_new_instruction_stack()
+        {
+            const string emptyProgram = "<Program><Variables /><Expressions /></Program>";
+            var requests = new List<AiRequest>();
+            var adapter = new FakeAdapter(emptyProgram);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(CreateTopLevelInstructionResponse(emptyProgram));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Create a program.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(1));
+            Assert.That(requests[0].Context, Does.Contain("zero or more direct Instructions stacks"));
+            Assert.That(requests[0].Context, Does.Contain("insertChild targeting /Program[0]"));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
+            Assert.That(workflow.ShowPreview(), Is.Not.Null);
+            Assert.That(adapter.SetCalls, Is.Zero);
         }
 
         [Test]
@@ -836,6 +860,34 @@ namespace VizzyGPT.Tests.EditMode
                     new PatchOperation(PatchOperationType.AddVariable, name: "counter", value: "0")
                 });
             return new AiResponse("Counter preview.", patch, true, Array.Empty<string>());
+        }
+
+        private static AiResponse CreateTopLevelInstructionResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Create instruction stack",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]"),
+                        node: new NodeSpec(
+                            "Instructions",
+                            new Dictionary<string, string>(StringComparer.Ordinal),
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Log",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["id"] = "1"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Instruction stack preview.", patch, true, Array.Empty<string>());
         }
 
         private static AiResponse CreateProtectedRootResponse(string baseXml, string marker)

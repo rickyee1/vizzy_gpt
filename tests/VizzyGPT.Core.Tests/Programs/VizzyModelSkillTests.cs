@@ -48,6 +48,9 @@ namespace VizzyGPT.Core.Tests.Programs
 
             Assert.That(reference, Does.Contain("- Events start cooperative instruction sequences."));
             Assert.That(reference, Does.Contain("- Craft controls use SetInput; do not invent dedicated throttle/pitch/roll nodes."));
+            Assert.That(reference, Does.Contain("Program contains exactly one direct Variables and Expressions container"));
+            Assert.That(reference, Does.Contain("zero or more direct Instructions stacks"));
+            Assert.That(reference, Does.Contain("insertChild targeting /Program[0]"));
             Assert.That(reference, Does.Contain("Prefer id selectors from the current program XML"));
             Assert.That(reference, Does.Contain("/Program[0]/Instructions[0]/Event[0]"));
             Assert.That(reference, Does.Contain("every path segment must include [index]"));

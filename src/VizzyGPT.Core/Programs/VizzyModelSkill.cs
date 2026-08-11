@@ -17,7 +17,8 @@ namespace VizzyGPT.Core.Programs
             "- Instructions execute sequentially; expressions supply typed values.\n" +
             "- Persistent loops must yield with the catalog's wait instruction.\n" +
             "- Craft controls use SetInput; do not invent dedicated throttle/pitch/roll nodes.\n" +
-            "- Preserve Program/Variables, Program/Instructions, and Program/Expressions.\n" +
+            "- Program contains exactly one direct Variables and Expressions container, plus zero or more direct Instructions stacks.\n" +
+            "- Preserve existing structural containers. If no direct Instructions stack exists, create one with insertChild targeting /Program[0]; never add or remove Variables or Expressions.\n" +
             "- Prefer id selectors from the current program XML. If a path is required, use an absolute canonical indexed path such as /Program[0]/Instructions[0]/Event[0]; every path segment must include [index].\n" +
             "- Use only listed element/style combinations and preserve each template's child shape.\n" +
             "\n" +

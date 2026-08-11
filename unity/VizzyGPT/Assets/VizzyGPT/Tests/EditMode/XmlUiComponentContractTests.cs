@@ -421,6 +421,10 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(promptRect.yMax, Is.LessThan(transcriptRect.yMin));
             Assert.That(transcriptRect.yMin, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
             Assert.That(transcriptRect.yMax, Is.LessThan(panelHeight), "Transcript top offset must reserve upper controls.");
+            Assert.That(
+                transcriptRect.yMin - promptRect.yMax,
+                Is.GreaterThanOrEqualTo(48f),
+                "Transcript must reserve room for the final reasoning/error/Preview action row above the composer.");
         }
 
         private static XmlDocument LoadStockStyles()

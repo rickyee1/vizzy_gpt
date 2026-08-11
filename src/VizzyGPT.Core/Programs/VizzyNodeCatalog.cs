@@ -7,6 +7,29 @@ namespace VizzyGPT.Core.Programs
 {
     public sealed class VizzyNodeCatalog
     {
+        // ProgramSerializer emits these pairs even though they have no matching static toolbox template.
+        private static readonly KeyValuePair<string, string>[] SerializerElementStylePairs =
+        {
+            new KeyValuePair<string, string>("CallCustomExpression", "call-custom-expression"),
+            new KeyValuePair<string, string>("CallCustomInstruction", "call-custom-instruction"),
+            new KeyValuePair<string, string>("CustomExpression", "custom-expression"),
+            new KeyValuePair<string, string>("CustomInstruction", "custom-instruction"),
+            new KeyValuePair<string, string>("SetCraftProperty", "play-beep")
+        };
+
+        private static readonly string[] SerializerInstructionElements =
+        {
+            "CallCustomInstruction",
+            "CustomInstruction",
+            "SetCraftProperty"
+        };
+
+        private static readonly string[] SerializerExpressionElements =
+        {
+            "CallCustomExpression",
+            "CustomExpression"
+        };
+
         private readonly ImmutableOrdinalStringSet styles;
         private readonly ImmutableOrdinalStringSet elements;
         private readonly ImmutableOrdinalStringSet instructionElements;
@@ -44,9 +67,15 @@ namespace VizzyGPT.Core.Programs
             var styles = root.Descendants("Style")
                 .Select(style => style.Attribute("id")?.Value)
                 .Where(id => !string.IsNullOrEmpty(id))
-                .Cast<string>();
+                .Cast<string>()
+                .ToArray();
+            var knownStyles = new HashSet<string>(styles, StringComparer.Ordinal);
+            var serializerPairs = SerializerElementStylePairs
+                .Where(pair => knownStyles.Contains(pair.Value))
+                .ToArray();
             var elements = root.DescendantsAndSelf()
-                .Select(element => element.Name.LocalName);
+                .Select(element => element.Name.LocalName)
+                .Concat(serializerPairs.Select(pair => pair.Key));
             var styleColors = root.Elements("Styles")
                 .SelectMany(container => container.Elements("Style"))
                 .Where(style => style.Attribute("id") != null && style.Attribute("color") != null)
@@ -60,9 +89,15 @@ namespace VizzyGPT.Core.Programs
                 .SelectMany(category => category.Elements())
                 .ToArray();
             var instructionElements = CategoryElements(root, "Instructions")
-                .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor));
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor))
+                .Concat(serializerPairs
+                    .Where(pair => SerializerInstructionElements.Contains(pair.Key, StringComparer.Ordinal))
+                    .Select(pair => pair.Key));
             var expressionElements = CategoryElements(root, "Expressions")
-                .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor));
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor))
+                .Concat(serializerPairs
+                    .Where(pair => SerializerExpressionElements.Contains(pair.Key, StringComparer.Ordinal))
+                    .Select(pair => pair.Key));
             var concreteTemplates = stockNodes.Any()
                 ? stockNodes
                 : CompactTemplates(root).ToArray();
@@ -76,9 +111,13 @@ namespace VizzyGPT.Core.Programs
                 new ImmutableOrdinalStringSet(elements),
                 new ImmutableOrdinalStringSet(instructionElements),
                 new ImmutableOrdinalStringSet(expressionElements),
-                new ImmutableOrdinalStringSet(styledTemplateNodes.Select(node => node.Name.LocalName)),
-                new ImmutableOrdinalStringSet(styledTemplateNodes.Select(node =>
-                    ElementStylePairKey(node.Name.LocalName, node.Attribute("style")!.Value))),
+                new ImmutableOrdinalStringSet(
+                    styledTemplateNodes.Select(node => node.Name.LocalName)
+                        .Concat(serializerPairs.Select(pair => pair.Key))),
+                new ImmutableOrdinalStringSet(
+                    styledTemplateNodes.Select(node =>
+                            ElementStylePairKey(node.Name.LocalName, node.Attribute("style")!.Value))
+                        .Concat(serializerPairs.Select(pair => ElementStylePairKey(pair.Key, pair.Value)))),
                 concreteTemplates.Select(CanonicalTemplate));
         }
 

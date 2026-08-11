@@ -58,4 +58,4 @@ powershell -ExecutionPolicy Bypass -File tools\Test-Unity.ps1
 
 The Unity project is under `unity/VizzyGPT`. Core code and tests are under `src` and `tests`. Manual release coverage is tracked in `docs/manual-test-checklist.md`.
 
-Last updated: 2026-07-30.
+Last updated: 2026-08-11.

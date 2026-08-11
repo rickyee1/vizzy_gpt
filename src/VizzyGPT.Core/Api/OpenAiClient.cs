@@ -28,13 +28,13 @@ namespace VizzyGPT.Core.Api
     {
         private const string EnvelopeName = "vizzy_patch_envelope";
         private const string CanonicalSelectorPathPattern =
-            "^/(?:[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])" +
-            "(?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$";
+            "^/Program\\[0\\](?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$";
         private const int MaximumDiagnosticLength = 512;
         private const string ModelInstruction =
             "Return only a JSON object matching the supplied Vizzy patch envelope schema. " +
-            "Never add, remove, replace, or move the direct Program containers Variables, " +
-            "Instructions, or Expressions. Modify only their permitted descendants.";
+            "Never remove, replace, or move the direct Program containers Variables, Instructions, or Expressions. " +
+            "Only insert a direct Instructions container when creating a new top-level stack; " +
+            "otherwise modify only permitted descendants.";
         private const string AskModelInstruction =
             "Answer the user's request using the supplied Vizzy context. Return ordinary text, not a patch envelope.";
 

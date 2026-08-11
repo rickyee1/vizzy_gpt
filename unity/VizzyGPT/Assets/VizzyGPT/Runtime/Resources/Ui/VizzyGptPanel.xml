@@ -17,7 +17,7 @@
         </ToggleButton>
       </ToggleGroup>
     </Panel>
-    <VerticalScrollView id="conversation-scroll" class="no-image" anchorMin="0 0" anchorMax="1 1" offsetMin="16 148" offsetMax="-16 -112">
+    <VerticalScrollView id="conversation-scroll" class="no-image" anchorMin="0 0" anchorMax="1 1" offsetMin="16 196" offsetMax="-16 -112">
       <VerticalLayout id="conversation-content" class="no-image" childForceExpandHeight="false" spacing="12" />
     </VerticalScrollView>
     <TextMeshProInputField id="composer-input" lineType="MultiLineSubmit" rectAlignment="LowerCenter" height="88" width="468" offsetXY="0 50">

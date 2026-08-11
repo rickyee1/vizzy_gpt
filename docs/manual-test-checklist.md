@@ -36,7 +36,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Request a Modify patch with a Chinese summary and open Preview. Expected: summary and warning content are visible.
 - [x] Close and reopen the panel. Expected: no duplicate font warning appears in `Player.log`.
 - [x] Confirm English labels and buttons retain their existing appearance.
-- Result: passed in Juno 1.4.101.0c with the final installed package.
+- Result: passed in Juno 1.4.104.0c with the final installed package.
 
 ## Editor Modify
 
@@ -47,7 +47,9 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Return protected-root removals for both the initial and repair response. Expected: no Preview action, no mutation, and an expandable technical error row.
 - [x] Open the repaired preview and Cancel. Expected: the editor program remains unchanged.
 - [ ] With the final selector-schema build, prompt `帮我写一个自动着陆程序，只使用当前 Vizzy 节点目录中的节点`. Expected: the model returns a locally valid patch and Preview opens without a canonical-selector error. Live attempts on 2026-08-04 were blocked before patch parsing by the configured Synapse endpoint: one no-response failure after 60.5 seconds and one HTTP 500 after 23.9 seconds.
-- [ ] Request setting throttle. Expected: the generated node is `SetInput` with style `set-input`.
+- [x] Request setting throttle. Preview showed `Inserted <SetInput> after id 0`; the applied editor program showed one `SetInput` node with `input=throttle`, `style=set-input`, and value `0.5`.
+- [x] Cancel the throttle preview and confirm the editor canvas remains unchanged.
+- [x] Apply the same verified throttle preview, use native `SAVE TO CRAFT`, leave Vizzy, reopen Vizzy, and confirm `set Throttle to 0.5` persists.
 - [ ] Return a fabricated `set-throttle` first response for a throttle request. Expected: exactly one repair request uses the valid `SetInput`/`set-input` template.
 - [ ] Return responses outside the catalog for both the initial and repair attempts. Expected: no Preview and no program mutation.
 - [ ] Exercise every first-release operation with a valid fixture: add/rename/remove variable, insert before/after, insert into container, replace subtree, remove node, move node, and update attribute/constant.
@@ -81,14 +83,18 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 
 ## Evidence
 
-- Automated Core results: `509/509` passed on 2026-08-04.
-- Automated Unity EditMode results: `146/146` passed on 2026-08-04.
+- Automated Core results: `524/524` passed on 2026-08-11.
+- Automated Unity EditMode results: `154/154` passed on 2026-08-11.
 - Automated result files: `artifacts/editmode-results.xml`, `artifacts/unity-editmode.log`.
+- Final package build log: `artifacts/unity-package-final-clean.log`.
 - Runtime logs to inspect after final restart:
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/ModLoadLog.txt` and
   `C:/Users/rickyee/AppData/LocalLow/Jundroo/SimpleRockets 2/Player.log`.
-- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/4/2026 2:03:09 PM`.
-- Final package size: `16,809,035` bytes.
-- Final package hash: `A27E635431340AE80A1FC31CA46520631349A2929CC89616AF9886BAFEE334EB`.
+- Final load line: `Mod Loaded: VizzyGPT, Version 0.1 - 8/11/2026 11:29:35 AM`.
+- Final package size: `16,812,619` bytes.
+- Final package hash: `AAB76B1AF5923DC2B6B5DD9813A47A9426BA72A9998D7063C09697CE813403F6`.
+- Final load smoke: the rebuilt package loaded on Juno 1.4.104.0c and the current `Player.log` contained no VizzyGPT error or exception. The existing `CylinderTank`/`PartConnection` craft warnings are unrelated to VizzyGPT.
 - Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
-- Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return a patch in either attempt, so Preview/local catalog validation remains unverified rather than passed.
+- Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return an automatic-landing patch in either attempt, so that larger patch scenario remains unverified rather than passed.
+- Live throttle acceptance on Juno 1.4.104.0c: Preview displayed one `SetInput` insertion with `throttle=0.5`; Cancel left the canvas unchanged; Apply followed by native save, leaving Vizzy, and reopening Vizzy restored the node.
+- Conversation persistence evidence: `UserData/VizzyGPT/Conversations/c397d56845a14713ae6ddbda84714664.json` remained valid UTF-8 JSON with 20 messages, and the updated program hash was linked to that conversation in `index.json`.

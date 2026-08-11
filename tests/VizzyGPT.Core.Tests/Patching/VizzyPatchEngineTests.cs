@@ -305,6 +305,8 @@ namespace VizzyGPT.Core.Tests.Patching
         [TestCase("/Program[0]/Instructions[0]/Event[00]")]
         [TestCase("/Program[0]/Instructions[0]/Event[0]/")]
         [TestCase("/Program[0]/Instructions/Event[0]")]
+        [TestCase("/Other[0]")]
+        [TestCase("/Program[1]")]
         public void Deserialize_rejects_noncanonical_path_selectors(string path)
         {
             AssertDeserializeRejected(PatchJson(Op("removeNode", "target", Path(path))));
@@ -742,6 +744,36 @@ namespace VizzyGPT.Core.Tests.Patching
 
             Assert.That(exception!.Message, Does.Contain("protected structural root"));
             Assert.That(document.ToXml(), Is.EqualTo(originalXml));
+        }
+
+        [Test]
+        public void Apply_allows_adding_a_top_level_instruction_stack_to_an_empty_program()
+        {
+            var document = Document("<Program><Variables /><Expressions /></Program>");
+            var instructions = new JObject
+            {
+                ["element"] = "Instructions",
+                ["attributes"] = new JObject(),
+                ["children"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["element"] = "Event",
+                        ["attributes"] = new JObject
+                        {
+                            ["event"] = "FlightStart",
+                            ["id"] = "0",
+                            ["style"] = "flight-start"
+                        },
+                        ["children"] = new JArray()
+                    }
+                }
+            };
+
+            ApplyAndAssert(
+                document,
+                Op("insertChild", "target", Path("/Program[0]"), "node", instructions),
+                "<Program><Variables /><Instructions><Event event=\"FlightStart\" id=\"0\" style=\"flight-start\" /></Instructions><Expressions /></Program>");
         }
 
         [Test]

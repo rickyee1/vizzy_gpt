@@ -18,8 +18,8 @@ namespace VizzyGPT.Core.Tests.Api
         private const string ApiKey = "sk-task5-secret";
         private const string BaseHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         private const string ProtectedRootInstruction =
-            "Never add, remove, replace, or move the direct Program containers Variables, " +
-            "Instructions, or Expressions. Modify only their permitted descendants.";
+            "Never remove, replace, or move the direct Program containers Variables, Instructions, or Expressions. " +
+            "Only insert a direct Instructions container when creating a new top-level stack; otherwise modify only permitted descendants.";
 
         [TestCase(ApiMode.Responses)]
         [TestCase(ApiMode.ChatCompletions)]
@@ -823,6 +823,33 @@ namespace VizzyGPT.Core.Tests.Api
             AssertValidResponse(result, "Repaired patch");
         }
 
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Out_of_range_selector_path_index_triggers_exactly_one_schema_repair(ApiMode mode)
+        {
+            var invalid = Envelope(
+                "Selector needs repair",
+                new JArray(new JObject
+                {
+                    ["type"] = "removeNode",
+                    ["target"] = new JObject
+                    {
+                        ["path"] = "/Program[0]/Instructions[2147483648]"
+                    }
+                }));
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, invalid)));
+            transport.Enqueue(Response(200, ModelBody(mode, ValidEnvelope("Repaired selector"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(RequestInput(transport.Requests[1], mode), Does.Contain(invalid));
+            Assert.That(RequestInput(transport.Requests[1], mode), Does.Contain("absolute canonical indexed path"));
+            AssertValidResponse(result, "Repaired selector");
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
         [Test]
         public async Task Two_invalid_outputs_return_sanitized_text_only_response()
         {
@@ -1075,7 +1102,7 @@ namespace VizzyGPT.Core.Tests.Api
                     member["required"]!.Values<string>().Single() == "path");
                 Assert.That(
                     (string?)pathVariant["properties"]!["path"]!["pattern"],
-                    Is.EqualTo("^/(?:[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])(?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$"));
+                    Is.EqualTo("^/Program\\[0\\](?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$"));
             }
 
             var nodeSpec = (JObject)schema["$defs"]!["nodeSpec"]!;
