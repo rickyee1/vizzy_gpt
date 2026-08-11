@@ -7,21 +7,53 @@ namespace VizzyGPT.Core.Programs
 {
     public sealed class VizzyNodeCatalog
     {
+        // ProgramSerializer emits these pairs even though they have no matching static toolbox template.
+        private static readonly KeyValuePair<string, string>[] SerializerElementStylePairs =
+        {
+            new KeyValuePair<string, string>("CallCustomExpression", "call-custom-expression"),
+            new KeyValuePair<string, string>("CallCustomInstruction", "call-custom-instruction"),
+            new KeyValuePair<string, string>("CustomExpression", "custom-expression"),
+            new KeyValuePair<string, string>("CustomInstruction", "custom-instruction"),
+            new KeyValuePair<string, string>("SetCraftProperty", "play-beep")
+        };
+
+        private static readonly string[] SerializerInstructionElements =
+        {
+            "CallCustomInstruction",
+            "CustomInstruction",
+            "SetCraftProperty"
+        };
+
+        private static readonly string[] SerializerExpressionElements =
+        {
+            "CallCustomExpression",
+            "CustomExpression"
+        };
+
         private readonly ImmutableOrdinalStringSet styles;
         private readonly ImmutableOrdinalStringSet elements;
         private readonly ImmutableOrdinalStringSet instructionElements;
         private readonly ImmutableOrdinalStringSet expressionElements;
+        private readonly ImmutableOrdinalStringSet styledElements;
+        private readonly ImmutableOrdinalStringSet elementStylePairs;
+        private readonly string[] templates;
 
         private VizzyNodeCatalog(
             ImmutableOrdinalStringSet styles,
             ImmutableOrdinalStringSet elements,
             ImmutableOrdinalStringSet instructionElements,
-            ImmutableOrdinalStringSet expressionElements)
+            ImmutableOrdinalStringSet expressionElements,
+            ImmutableOrdinalStringSet styledElements,
+            ImmutableOrdinalStringSet elementStylePairs,
+            IEnumerable<string> templates)
         {
             this.styles = styles;
             this.elements = elements;
             this.instructionElements = instructionElements;
             this.expressionElements = expressionElements;
+            this.styledElements = styledElements;
+            this.elementStylePairs = elementStylePairs;
+            this.templates = DistinctOrdinal(templates);
         }
 
         public static VizzyNodeCatalog FromToolboxXml(string xml)
@@ -35,9 +67,15 @@ namespace VizzyGPT.Core.Programs
             var styles = root.Descendants("Style")
                 .Select(style => style.Attribute("id")?.Value)
                 .Where(id => !string.IsNullOrEmpty(id))
-                .Cast<string>();
+                .Cast<string>()
+                .ToArray();
+            var knownStyles = new HashSet<string>(styles, StringComparer.Ordinal);
+            var serializerPairs = SerializerElementStylePairs
+                .Where(pair => knownStyles.Contains(pair.Value))
+                .ToArray();
             var elements = root.DescendantsAndSelf()
-                .Select(element => element.Name.LocalName);
+                .Select(element => element.Name.LocalName)
+                .Concat(serializerPairs.Select(pair => pair.Key));
             var styleColors = root.Elements("Styles")
                 .SelectMany(container => container.Elements("Style"))
                 .Where(style => style.Attribute("id") != null && style.Attribute("color") != null)
@@ -51,16 +89,39 @@ namespace VizzyGPT.Core.Programs
                 .SelectMany(category => category.Elements())
                 .ToArray();
             var instructionElements = CategoryElements(root, "Instructions")
-                .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor));
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsInstructionColor))
+                .Concat(serializerPairs
+                    .Where(pair => SerializerInstructionElements.Contains(pair.Key, StringComparer.Ordinal))
+                    .Select(pair => pair.Key));
             var expressionElements = CategoryElements(root, "Expressions")
-                .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor));
+                .Concat(StockCategoryElements(stockNodes, styleColors, IsExpressionColor))
+                .Concat(serializerPairs
+                    .Where(pair => SerializerExpressionElements.Contains(pair.Key, StringComparer.Ordinal))
+                    .Select(pair => pair.Key));
+            var concreteTemplates = stockNodes.Any()
+                ? stockNodes
+                : CompactTemplates(root).ToArray();
+            var styledTemplateNodes = concreteTemplates
+                .SelectMany(template => template.DescendantsAndSelf())
+                .Where(node => node.Attribute("style") != null)
+                .ToArray();
 
             return new VizzyNodeCatalog(
                 new ImmutableOrdinalStringSet(styles),
                 new ImmutableOrdinalStringSet(elements),
                 new ImmutableOrdinalStringSet(instructionElements),
-                new ImmutableOrdinalStringSet(expressionElements));
+                new ImmutableOrdinalStringSet(expressionElements),
+                new ImmutableOrdinalStringSet(
+                    styledTemplateNodes.Select(node => node.Name.LocalName)
+                        .Concat(serializerPairs.Select(pair => pair.Key))),
+                new ImmutableOrdinalStringSet(
+                    styledTemplateNodes.Select(node =>
+                            ElementStylePairKey(node.Name.LocalName, node.Attribute("style")!.Value))
+                        .Concat(serializerPairs.Select(pair => ElementStylePairKey(pair.Key, pair.Value)))),
+                concreteTemplates.Select(CanonicalTemplate));
         }
+
+        public IReadOnlyList<string> Templates => Array.AsReadOnly(templates);
 
         public bool ContainsStyle(string? style)
         {
@@ -82,6 +143,18 @@ namespace VizzyGPT.Core.Programs
             return element != null && expressionElements.Contains(element);
         }
 
+        public bool ContainsStyledElement(string? element)
+        {
+            return element != null && styledElements.Contains(element);
+        }
+
+        public bool ContainsElementStylePair(string? element, string? style)
+        {
+            return element != null &&
+                style != null &&
+                elementStylePairs.Contains(ElementStylePairKey(element, style));
+        }
+
         private static IEnumerable<string> CategoryElements(XElement root, string categoryName)
         {
             return root.Elements()
@@ -90,6 +163,57 @@ namespace VizzyGPT.Core.Programs
                     string.Equals(element.Name.LocalName, categoryName, StringComparison.Ordinal))
                 .SelectMany(category => category.Elements())
                 .Select(element => element.Name.LocalName);
+        }
+
+        private static IEnumerable<XElement> CompactTemplates(XElement root)
+        {
+            return root.Elements()
+                .Where(element =>
+                    element.Name.NamespaceName.Length == 0 &&
+                    (string.Equals(element.Name.LocalName, "Instructions", StringComparison.Ordinal) ||
+                     string.Equals(element.Name.LocalName, "Expressions", StringComparison.Ordinal)))
+                .SelectMany(container => container.Elements());
+        }
+
+        private static string CanonicalTemplate(XElement node)
+        {
+            var clone = new XElement(node);
+            CanonicalizeTemplateElement(clone);
+            return clone.ToString(SaveOptions.DisableFormatting);
+        }
+
+        private static void CanonicalizeTemplateElement(XElement element)
+        {
+            element.ReplaceAttributes(element.Attributes()
+                .OrderBy(attribute => attribute.Name.LocalName, StringComparer.Ordinal)
+                .ThenBy(attribute => attribute.Name.NamespaceName, StringComparer.Ordinal)
+                .Select(attribute => new XAttribute(attribute)));
+
+            var textNodes = element.Nodes().OfType<XText>().ToArray();
+            if (textNodes.All(text => string.IsNullOrWhiteSpace(text.Value)))
+            {
+                foreach (var textNode in textNodes)
+                {
+                    textNode.Remove();
+                }
+            }
+
+            foreach (var child in element.Elements())
+            {
+                CanonicalizeTemplateElement(child);
+            }
+        }
+
+        private static string[] DistinctOrdinal(IEnumerable<string> source)
+        {
+            var values = new HashSet<string>(source, StringComparer.Ordinal).ToArray();
+            Array.Sort(values, StringComparer.Ordinal);
+            return values;
+        }
+
+        private static string ElementStylePairKey(string element, string style)
+        {
+            return element + "\0" + style;
         }
 
         private static IEnumerable<string> StockCategoryElements(
@@ -134,8 +258,7 @@ namespace VizzyGPT.Core.Programs
                     throw new ArgumentNullException(nameof(source));
                 }
 
-                values = new HashSet<string>(source, StringComparer.Ordinal).ToArray();
-                Array.Sort(values, StringComparer.Ordinal);
+                values = DistinctOrdinal(source);
             }
 
             public bool Contains(string value)

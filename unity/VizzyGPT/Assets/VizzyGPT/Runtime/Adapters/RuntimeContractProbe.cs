@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Xml.Linq;
 using ModApi.Craft.Program;
 using UnityEngine;
 
@@ -28,11 +29,22 @@ namespace VizzyGPT.Runtime.Adapters
             MemberInfo flightProgramMember,
             object refreshTarget,
             MethodInfo refreshMethod)
+            : this(instance, flightProgramMember, refreshTarget, refreshMethod, null)
+        {
+        }
+
+        public RuntimeContract(
+            UnityEngine.Object instance,
+            MemberInfo flightProgramMember,
+            object refreshTarget,
+            MethodInfo refreshMethod,
+            MethodInfo programLoadMethod)
         {
             Instance = instance;
             FlightProgramMember = flightProgramMember;
             RefreshTarget = refreshTarget;
             RefreshMethod = refreshMethod;
+            ProgramLoadMethod = programLoadMethod;
         }
 
         public UnityEngine.Object Instance { get; }
@@ -42,6 +54,8 @@ namespace VizzyGPT.Runtime.Adapters
         public object RefreshTarget { get; }
 
         public MethodInfo RefreshMethod { get; }
+
+        public MethodInfo ProgramLoadMethod { get; }
     }
 
     public sealed class RuntimeContractProbe
@@ -69,11 +83,30 @@ namespace VizzyGPT.Runtime.Adapters
                     continue;
                 }
 
+                var programLoadMethod = FindPublicProgramLoadMethod(type);
                 foreach (var instance in FindInstances(type))
                 {
-                    if (TryFindRefreshContract(type, instance, out var refreshTarget, out var refreshMethod))
+                    if (!IsActiveSceneComponent(instance))
                     {
-                        candidates.Add(new RuntimeContract(instance, member, refreshTarget, refreshMethod));
+                        continue;
+                    }
+
+                    if (programLoadMethod != null)
+                    {
+                        candidates.Add(new RuntimeContract(
+                            instance,
+                            member,
+                            null,
+                            null,
+                            programLoadMethod));
+                    }
+                    else if (TryFindRefreshContract(type, instance, out var refreshTarget, out var refreshMethod))
+                    {
+                        candidates.Add(new RuntimeContract(
+                            instance,
+                            member,
+                            refreshTarget,
+                            refreshMethod));
                     }
                 }
             }
@@ -87,7 +120,7 @@ namespace VizzyGPT.Runtime.Adapters
             if (candidates.Count > 1)
             {
                 compatibility = RuntimeCompatibilityResult.AmbiguousContract(
-                    candidates.Select(Summarize).ToArray());
+                    candidates.Select(SummarizeInstance).ToArray());
                 return null;
             }
 
@@ -103,6 +136,11 @@ namespace VizzyGPT.Runtime.Adapters
         private static string Summarize(RuntimeContract contract)
         {
             return contract.Instance.GetType().FullName + "." + contract.FlightProgramMember.Name;
+        }
+
+        private static string SummarizeInstance(RuntimeContract contract)
+        {
+            return Summarize(contract) + "@" + contract.Instance.GetInstanceID();
         }
 
         internal bool TryFindFlightProgramFallback(out UnityEngine.Object instance, out MemberInfo member)
@@ -294,6 +332,13 @@ namespace VizzyGPT.Runtime.Adapters
             }
         }
 
+        private static bool IsActiveSceneComponent(UnityEngine.Object instance)
+        {
+            return instance is Component component &&
+                component.gameObject.scene.IsValid() &&
+                component.gameObject.activeInHierarchy;
+        }
+
         private bool TryFindRefreshContract(
             Type editorType,
             UnityEngine.Object editor,
@@ -324,6 +369,16 @@ namespace VizzyGPT.Runtime.Adapters
             return new[] { "RefreshUI", "RefreshCategory", "Refresh", "Rebuild" }
                 .Select(name => type.GetMethod(name, PublicInstance, null, Type.EmptyTypes, null))
                 .FirstOrDefault(method => method != null);
+        }
+
+        private static MethodInfo FindPublicProgramLoadMethod(Type type)
+        {
+            return type.GetMethod(
+                "LoadFlightProgram",
+                PublicInstance,
+                null,
+                new[] { typeof(XElement) },
+                null);
         }
     }
 }

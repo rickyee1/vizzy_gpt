@@ -116,10 +116,12 @@ namespace VizzyGPT.Runtime.Adapters
                 return false;
             }
 
+            XElement programXml;
             FlightProgram replacement;
             try
             {
-                replacement = serializer.DeserializeFlightProgram(XElement.Parse(xml));
+                programXml = XElement.Parse(xml);
+                replacement = serializer.DeserializeFlightProgram(programXml);
             }
             catch (Exception exception)
             {
@@ -137,28 +139,28 @@ namespace VizzyGPT.Runtime.Adapters
                 return false;
             }
 
-            if (!CanWrite(contract.FlightProgramMember))
+            if (contract.ProgramLoadMethod == null && !CanWrite(contract.FlightProgramMember))
             {
                 error = "Vizzy editor FlightProgram member is read-only.";
                 return false;
             }
 
             FlightProgram previous = null;
+            XElement previousXml = null;
             try
             {
                 previous = ReadFlightProgram(contract.Instance, contract.FlightProgramMember);
-                WriteFlightProgram(contract.Instance, contract.FlightProgramMember, replacement);
-                RefreshEditor(contract);
+                previousXml = serializer.SerializeFlightProgram(previous);
+                ApplyEditorProgram(contract, programXml, replacement);
                 return true;
             }
             catch (Exception exception)
             {
                 try
                 {
-                    if (previous != null)
+                    if (previous != null && previousXml != null)
                     {
-                        WriteFlightProgram(contract.Instance, contract.FlightProgramMember, previous);
-                        RefreshEditor(contract);
+                        ApplyEditorProgram(contract, previousXml, previous);
                     }
                 }
                 catch (Exception rollbackException)
@@ -359,6 +361,21 @@ namespace VizzyGPT.Runtime.Adapters
         private static void RefreshEditor(RuntimeContract contract)
         {
             contract.RefreshMethod.Invoke(contract.RefreshTarget, null);
+        }
+
+        private static void ApplyEditorProgram(
+            RuntimeContract contract,
+            XElement programXml,
+            FlightProgram program)
+        {
+            if (contract.ProgramLoadMethod != null)
+            {
+                contract.ProgramLoadMethod.Invoke(contract.Instance, new object[] { new XElement(programXml) });
+                return;
+            }
+
+            WriteFlightProgram(contract.Instance, contract.FlightProgramMember, program);
+            RefreshEditor(contract);
         }
 
         private static RefreshContract ResolvePrivateRefreshContract(UnityEngine.Object editor)

@@ -10,7 +10,6 @@ namespace VizzyGPT.Core.Tests.Validation
     public sealed class VizzyProgramValidatorTests
     {
         [TestCase("Variables")]
-        [TestCase("Instructions")]
         [TestCase("Expressions")]
         public void Validate_reports_each_missing_required_container(string containerName)
         {
@@ -25,14 +24,26 @@ namespace VizzyGPT.Core.Tests.Validation
         }
 
         [Test]
-        public void Validate_reports_the_direct_container_count_when_instructions_is_missing()
+        public void Validate_reports_the_direct_container_count_when_variables_is_missing()
         {
             var root = XElement.Parse(ValidProgramXml);
-            root.Element("Instructions")!.Remove();
+            root.Element("Variables")!.Remove();
 
             var report = Validator().Validate(Document(root), Catalog());
 
             AssertError(report, "MissingContainer", "found 0");
+        }
+
+        [TestCase("")]
+        [TestCase("<Instructions /><Instructions />")]
+        public void Validate_accepts_zero_or_multiple_top_level_instruction_stacks(string instructionStacks)
+        {
+            var document = Document(
+                "<Program><Variables />" + instructionStacks + "<Expressions /></Program>");
+
+            var report = Validator().Validate(document, Catalog());
+
+            Assert.That(report.IsValid, Is.True, string.Join("\n", report.Errors.Select(issue => issue.Message)));
         }
 
         [Test]
@@ -68,6 +79,87 @@ namespace VizzyGPT.Core.Tests.Validation
             var report = Validator().Validate(document, Catalog());
 
             AssertError(report, "UnknownStyle", "FLIGHT-START");
+        }
+
+        [Test]
+        public void Validate_rejects_a_styled_element_absent_from_the_catalog_templates()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetThrottle style='set-input'><Constant number='0' /></SetThrottle></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            AssertCatalogError(
+                report,
+                "UnknownStyledElement",
+                "Element 'SetThrottle' is not present in the node catalog templates.",
+                "/Program[0]/Instructions[0]/SetThrottle[0]");
+        }
+
+        [Test]
+        public void Validate_rejects_a_known_style_paired_with_the_wrong_catalog_element()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetInput style='flight-start' input='throttle'><Constant number='0' /></SetInput></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            AssertCatalogError(
+                report,
+                "MismatchedElementStyle",
+                "Style 'flight-start' is not valid for element 'SetInput' in the node catalog templates.",
+                "/Program[0]/Instructions[0]/SetInput[0]");
+        }
+
+        [Test]
+        public void Validate_accepts_a_catalog_template_element_style_pair()
+        {
+            var document = Document(
+                "<Program><Variables /><Instructions><SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput></Instructions><Expressions /></Program>");
+
+            var report = Validator().Validate(document, PairCatalog());
+
+            Assert.That(report.IsValid, Is.True, string.Join("\n", report.Errors.Select(issue => issue.Message)));
+        }
+
+        [TestCase("Instructions", "<CallCustomInstruction call='Run' style='call-custom-instruction' />")]
+        [TestCase("Instructions", "<CustomInstruction name='Run' style='custom-instruction' />")]
+        [TestCase("Expressions", "<CallCustomExpression call='Value' style='call-custom-expression' />")]
+        [TestCase("Expressions", "<CustomExpression name='Value' style='custom-expression' />")]
+        [TestCase("Instructions", "<SetCraftProperty property='Sound.Beep' style='play-beep' />")]
+        public void Validate_accepts_runtime_generated_and_legacy_element_style_pairs(
+            string containerName,
+            string nodeXml)
+        {
+            var instructions = string.Equals(containerName, "Instructions", StringComparison.Ordinal)
+                ? nodeXml
+                : string.Empty;
+            var expressions = string.Equals(containerName, "Expressions", StringComparison.Ordinal)
+                ? nodeXml
+                : string.Empty;
+            var document = Document(
+                "<Program><Variables /><Instructions>" + instructions + "</Instructions>" +
+                "<Expressions>" + expressions + "</Expressions></Program>");
+
+            var report = Validator().Validate(document, CompatibilityPairCatalog());
+
+            Assert.That(report.IsValid, Is.True, string.Join("\n", report.Errors.Select(issue => issue.Message)));
+        }
+
+        [TestCase("CallCustomInstruction", true, false)]
+        [TestCase("CustomInstruction", true, false)]
+        [TestCase("CallCustomExpression", false, true)]
+        [TestCase("CustomExpression", false, true)]
+        public void Catalog_classifies_runtime_generated_custom_nodes(
+            string element,
+            bool isInstruction,
+            bool isExpression)
+        {
+            var catalog = CompatibilityPairCatalog();
+
+            Assert.That(catalog.ContainsElement(element), Is.True);
+            Assert.That(catalog.ContainsInstructionElement(element), Is.EqualTo(isInstruction));
+            Assert.That(catalog.ContainsExpressionElement(element), Is.EqualTo(isExpression));
         }
 
         [Test]
@@ -247,8 +339,27 @@ namespace VizzyGPT.Core.Tests.Validation
         private static VizzyNodeCatalog Catalog() => VizzyNodeCatalog.FromToolboxXml(
             "<VizzyToolbox><Styles>" +
             "<Style id='flight-start' /><Style id='log' /><Style id='set-variable' />" +
-            "</Styles><Instructions><Event /><Log /><SetVariable /><While /><DynamicInstruction /></Instructions>" +
+            "</Styles><Instructions><Event style='flight-start' /><Log style='log' /><SetVariable style='set-variable' /><While /><DynamicInstruction /></Instructions>" +
             "<Expressions><Constant /><Variable /><CustomNode /><DynamicExpression /></Expressions></VizzyToolbox>");
+
+        private static VizzyNodeCatalog PairCatalog() => VizzyNodeCatalog.FromToolboxXml(
+            "<VizzyToolbox><Styles>" +
+            "<Style id='flight-start' color='Event' /><Style id='set-input' color='CraftInstruction' />" +
+            "</Styles><Categories><Category name='Events'><Event style='flight-start' /></Category>" +
+            "<Category name='Craft Instructions'><SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput></Category>" +
+            "</Categories></VizzyToolbox>");
+
+        private static VizzyNodeCatalog CompatibilityPairCatalog() => VizzyNodeCatalog.FromToolboxXml(
+            "<VizzyToolbox><Styles>" +
+            "<Style id='set-part' color='CraftInstruction' />" +
+            "<Style id='play-beep' color='Instruction' />" +
+            "<Style id='custom-expression' color='CustomExpression' />" +
+            "<Style id='custom-instruction' color='CustomInstruction' />" +
+            "<Style id='call-custom-expression' color='CraftInstruction' />" +
+            "<Style id='call-custom-instruction' color='CraftInstruction' />" +
+            "</Styles><Categories><Category name='Craft Instructions'>" +
+            "<SetCraftProperty style='set-part' property='Part.SetActivated' />" +
+            "</Category></Categories></VizzyToolbox>");
 
         private static VizzyProgramDocument Document(string xml) => VizzyProgramDocument.Parse(xml);
 
@@ -261,6 +372,19 @@ namespace VizzyGPT.Core.Tests.Validation
             var issue = report.Errors.Single(candidate => candidate.Code == code);
             Assert.That(issue.Severity, Is.EqualTo(ValidationSeverity.Error));
             Assert.That(issue.Message, Does.Contain(messageFragment));
+        }
+
+        private static void AssertCatalogError(
+            ValidationReport report,
+            string code,
+            string message,
+            string path)
+        {
+            Assert.That(report.IsValid, Is.False);
+            var issue = report.Errors.Single(candidate => candidate.Code == code);
+            Assert.That(issue.Severity, Is.EqualTo(ValidationSeverity.Error));
+            Assert.That(issue.Message, Is.EqualTo(message));
+            Assert.That(issue.Path, Is.EqualTo(path));
         }
     }
 }

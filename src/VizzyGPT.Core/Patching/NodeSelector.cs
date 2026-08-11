@@ -39,6 +39,11 @@ namespace VizzyGPT.Core.Patching
             }
 
             var segments = path.Substring(1).Split('/');
+            if (!string.Equals(segments[0], "Program[0]", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             foreach (var segment in segments)
             {
                 var openBracket = segment.IndexOf('[');

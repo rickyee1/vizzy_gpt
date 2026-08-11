@@ -197,6 +197,24 @@ namespace VizzyGPT.Core.Patching
         private static string InsertChild(VizzyProgramDocument document, PatchOperation operation)
         {
             var target = Resolve(document, operation.Target!);
+            if (ReferenceEquals(target, document.Root) &&
+                string.Equals(operation.Node!.Element, "Instructions", StringComparison.Ordinal))
+            {
+                var instructionStack = operation.Node.ToXElement();
+                var expressions = target.Elements()
+                    .FirstOrDefault(element => HasUnqualifiedName(element, "Expressions"));
+                if (expressions == null)
+                {
+                    target.Add(instructionStack);
+                }
+                else
+                {
+                    expressions.AddBeforeSelf(instructionStack);
+                }
+
+                return "Inserted <Instructions> into " + Describe(operation.Target!) + ".";
+            }
+
             RequireInstructionsContainer(target, "Child insertion target");
             RejectProtectedNodeSpec(operation.Node!);
             target.Add(operation.Node!.ToXElement());

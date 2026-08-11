@@ -18,8 +18,8 @@ namespace VizzyGPT.Core.Tests.Api
         private const string ApiKey = "sk-task5-secret";
         private const string BaseHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         private const string ProtectedRootInstruction =
-            "Never add, remove, replace, or move the direct Program containers Variables, " +
-            "Instructions, or Expressions. Modify only their permitted descendants.";
+            "Never remove, replace, or move the direct Program containers Variables, Instructions, or Expressions. " +
+            "Only insert a direct Instructions container when creating a new top-level stack; otherwise modify only permitted descendants.";
 
         [TestCase(ApiMode.Responses)]
         [TestCase(ApiMode.ChatCompletions)]
@@ -64,6 +64,28 @@ namespace VizzyGPT.Core.Tests.Api
             AssertStrictEnvelopeSchema((JObject)format["schema"]!);
 
             AssertValidResponse(result, "Added yaw");
+        }
+
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Ask_posts_plain_text_request_and_returns_plain_assistant_text(ApiMode mode)
+        {
+            const string answer = "这是普通问答，不是 Vizzy 补丁。";
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, answer)));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(mode, purpose: AiRequestPurpose.Ask),
+                CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(1));
+            var payload = ParseBody(transport.Requests.Single());
+            Assert.That(payload.ToString(Formatting.None), Does.Not.Contain("vizzy_patch_envelope"));
+            Assert.That(payload.ToString(Formatting.None), Does.Not.Contain("json_schema"));
+            Assert.That(result.Message, Is.EqualTo(answer));
+            Assert.That(result.Patch, Is.Null);
+            Assert.That(result.CanApply, Is.False);
+            Assert.That(result.Diagnostics, Is.Empty);
         }
 
         [Test]
@@ -274,6 +296,7 @@ namespace VizzyGPT.Core.Tests.Api
             Assert.That(request.Uri, Is.EqualTo(new Uri("https://api.example.test/openai/v1/chat/completions")));
             var payload = ParseBody(request);
             Assert.That((string?)payload["model"], Is.EqualTo("gpt-test"));
+            Assert.That((bool?)payload["stream"], Is.True);
             var messages = (JArray)payload["messages"]!;
             Assert.That(messages, Has.Count.GreaterThanOrEqualTo(2));
             Assert.That(messages.Select(message => (string?)message!["role"]), Does.Contain("system"));
@@ -289,6 +312,55 @@ namespace VizzyGPT.Core.Tests.Api
 
             AssertValidResponse(result, "Changed pitch");
             Assert.That(result.Metadata.ReasoningSummary, Is.Null);
+        }
+
+        [Test]
+        public async Task ChatCompletions_parses_streamed_content_summary_and_usage()
+        {
+            var output = ValidEnvelope("Streamed pitch change");
+            var midpoint = output.Length / 2;
+            var body = string.Join("\n\n", new[]
+            {
+                ": keep-alive",
+                "data: " + ChatChunk(new JObject
+                {
+                    ["role"] = "assistant",
+                    ["reasoning_summary"] = "Checked control ",
+                    ["reasoning_content"] = "must-not-be-exposed"
+                }),
+                "data: " + ChatChunk(new JObject
+                {
+                    ["reasoning_summary"] = "branches.",
+                    ["content"] = output.Substring(0, midpoint)
+                }),
+                "data: " + ChatChunk(new JObject
+                {
+                    ["content"] = output.Substring(midpoint)
+                }),
+                "data: " + new JObject
+                {
+                    ["choices"] = new JArray(),
+                    ["usage"] = new JObject
+                    {
+                        ["prompt_tokens"] = 80,
+                        ["completion_tokens"] = 24
+                    }
+                }.ToString(Formatting.None),
+                "data: [DONE]",
+                string.Empty
+            });
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, body));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.ChatCompletions),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Streamed pitch change");
+            Assert.That(result.Metadata.ReasoningSummary, Is.EqualTo("Checked control branches."));
+            Assert.That(result.Metadata.ReasoningSummary, Does.Not.Contain("must-not-be-exposed"));
+            Assert.That(result.Metadata.InputTokens, Is.EqualTo(80));
+            Assert.That(result.Metadata.OutputTokens, Is.EqualTo(24));
         }
 
         [Test]
@@ -552,8 +624,6 @@ namespace VizzyGPT.Core.Tests.Api
 
         [TestCase(401)]
         [TestCase(429)]
-        [TestCase(500)]
-        [TestCase(503)]
         public void Auto_does_not_fallback_or_retry_other_http_failures(int statusCode)
         {
             var transport = new FakeTransport();
@@ -564,6 +634,86 @@ namespace VizzyGPT.Core.Tests.Api
 
             Assert.That(exception!.StatusCode, Is.EqualTo(statusCode));
             Assert.That(transport.Requests, Has.Count.EqualTo(1));
+        }
+
+        [TestCase(500)]
+        [TestCase(502)]
+        [TestCase(503)]
+        [TestCase(504)]
+        [TestCase(520)]
+        [TestCase(522)]
+        [TestCase(523)]
+        [TestCase(524)]
+        public async Task Transient_http_failure_retries_once_within_the_original_timeout(int statusCode)
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(statusCode, ErrorBody("Temporary upstream failure", "upstream_failed")));
+            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Retry succeeded"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Retry succeeded");
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(
+                transport.Requests[1].Timeout,
+                Is.GreaterThan(TimeSpan.Zero).And.LessThanOrEqualTo(transport.Requests[0].Timeout));
+        }
+
+        [Test]
+        public void Repeated_transient_http_failure_stops_after_one_retry()
+        {
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(502, ErrorBody("First upstream failure", "upstream_failed")));
+            transport.Enqueue(Response(524, ErrorBody("Second upstream failure", "timeout")));
+
+            var exception = Assert.ThrowsAsync<OpenAiApiException>(
+                async () => await new OpenAiClient(transport).SendAsync(
+                    Request(ApiMode.Responses),
+                    CancellationToken.None));
+
+            Assert.That(exception!.StatusCode, Is.EqualTo(524));
+            Assert.That(exception.Message, Does.Contain("after one automatic retry"));
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+        }
+
+        [Test]
+        public async Task Transient_transport_failure_retries_once_with_a_reduced_timeout_budget()
+        {
+            var transport = new FakeTransport();
+            transport.EnqueueExceptionAfter(
+                TimeSpan.FromMilliseconds(20),
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+            transport.Enqueue(Response(200, ResponsesBody(ValidEnvelope("Transport retry succeeded"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(
+                Request(ApiMode.Responses),
+                CancellationToken.None);
+
+            AssertValidResponse(result, "Transport retry succeeded");
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(transport.Requests[1].Timeout, Is.LessThan(transport.Requests[0].Timeout));
+            Assert.That(transport.Requests[1].Timeout, Is.GreaterThan(TimeSpan.Zero));
+        }
+
+        [Test]
+        public void Repeated_transient_transport_failure_reports_the_retry_and_stops()
+        {
+            var transport = new FakeTransport();
+            transport.EnqueueException(
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+            transport.EnqueueException(
+                new TransientAiTransportException("The AI service closed the connection before returning a response."));
+
+            var exception = Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await new OpenAiClient(transport).SendAsync(
+                    Request(ApiMode.Responses),
+                    CancellationToken.None));
+
+            Assert.That(exception!.Message, Does.Contain("after one automatic retry"));
+            Assert.That(exception.Message, Does.Contain("closed the connection"));
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
         }
 
         [Test]
@@ -801,6 +951,33 @@ namespace VizzyGPT.Core.Tests.Api
             AssertValidResponse(result, "Repaired patch");
         }
 
+        [TestCase(ApiMode.Responses)]
+        [TestCase(ApiMode.ChatCompletions)]
+        public async Task Out_of_range_selector_path_index_triggers_exactly_one_schema_repair(ApiMode mode)
+        {
+            var invalid = Envelope(
+                "Selector needs repair",
+                new JArray(new JObject
+                {
+                    ["type"] = "removeNode",
+                    ["target"] = new JObject
+                    {
+                        ["path"] = "/Program[0]/Instructions[2147483648]"
+                    }
+                }));
+            var transport = new FakeTransport();
+            transport.Enqueue(Response(200, ModelBody(mode, invalid)));
+            transport.Enqueue(Response(200, ModelBody(mode, ValidEnvelope("Repaired selector"))));
+
+            var result = await new OpenAiClient(transport).SendAsync(Request(mode), CancellationToken.None);
+
+            Assert.That(transport.Requests, Has.Count.EqualTo(2));
+            Assert.That(RequestInput(transport.Requests[1], mode), Does.Contain(invalid));
+            Assert.That(RequestInput(transport.Requests[1], mode), Does.Contain("absolute canonical indexed path"));
+            AssertValidResponse(result, "Repaired selector");
+            Assert.That(result.Metadata.WasSchemaRepair, Is.True);
+        }
+
         [Test]
         public async Task Two_invalid_outputs_return_sanitized_text_only_response()
         {
@@ -966,7 +1143,8 @@ namespace VizzyGPT.Core.Tests.Api
         private static AiRequest Request(
             ApiMode mode,
             Uri? baseUri = null,
-            bool allowSchemaRepair = true)
+            bool allowSchemaRepair = true,
+            AiRequestPurpose purpose = AiRequestPurpose.Modify)
         {
             return new AiRequest(
                 mode,
@@ -976,7 +1154,8 @@ namespace VizzyGPT.Core.Tests.Api
                 baseUri ?? new Uri("https://api.example.test/openai/"),
                 ApiKey,
                 TimeSpan.FromSeconds(17),
-                allowSchemaRepair);
+                allowSchemaRepair,
+                purpose);
         }
 
         private static void AssertStrictEnvelopeSchema(JObject schema)
@@ -1043,7 +1222,16 @@ namespace VizzyGPT.Core.Tests.Api
                 .Where(property => string.Equals(property.Name, "anyOf", StringComparison.Ordinal))
                 .Select(property => (JArray)property.Value)
                 .ToArray();
-            Assert.That(anyOfArrays.Any(IsSelectorUnion), Is.True);
+            var selectorUnions = anyOfArrays.Where(IsSelectorUnion).ToArray();
+            Assert.That(selectorUnions, Is.Not.Empty);
+            foreach (var selectorUnion in selectorUnions)
+            {
+                var pathVariant = selectorUnion.Single(member =>
+                    member["required"]!.Values<string>().Single() == "path");
+                Assert.That(
+                    (string?)pathVariant["properties"]!["path"]!["pattern"],
+                    Is.EqualTo("^/Program\\[0\\](?:/[A-Za-z_][A-Za-z0-9_.-]*\\[(?:0|[1-9][0-9]*)\\])*$"));
+            }
 
             var nodeSpec = (JObject)schema["$defs"]!["nodeSpec"]!;
             var attributes = (JObject)nodeSpec["properties"]!["attributes"]!;
@@ -1239,6 +1427,19 @@ namespace VizzyGPT.Core.Tests.Api
             return ChatBodyObject(output).ToString(Formatting.None);
         }
 
+        private static string ChatChunk(JObject delta)
+        {
+            return new JObject
+            {
+                ["choices"] = new JArray(new JObject
+                {
+                    ["index"] = 0,
+                    ["delta"] = delta,
+                    ["finish_reason"] = JValue.CreateNull()
+                })
+            }.ToString(Formatting.None);
+        }
+
         private static JObject ChatBodyObject(string output)
         {
             return new JObject
@@ -1321,6 +1522,15 @@ namespace VizzyGPT.Core.Tests.Api
             public void EnqueueException(Exception exception)
             {
                 responses.Enqueue(() => throw exception);
+            }
+
+            public void EnqueueExceptionAfter(TimeSpan delay, Exception exception)
+            {
+                responses.Enqueue(() =>
+                {
+                    Thread.Sleep(delay);
+                    throw exception;
+                });
             }
 
             public Task<HttpTransportResponse> SendAsync(

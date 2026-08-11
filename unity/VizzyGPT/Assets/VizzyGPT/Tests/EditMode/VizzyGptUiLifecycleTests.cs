@@ -408,6 +408,76 @@ namespace VizzyGPT.Tests.EditMode
             }
         }
 
+        [Test]
+        public void Prompt_history_starts_from_empty_and_moves_oldest_to_newest_without_wrapping()
+        {
+            var history = new PromptHistoryNavigator();
+            history.Update(new[] { "first", "second", "third" });
+
+            Assert.That(history.TryMove(-1, string.Empty, out var value), Is.True);
+            Assert.That(value, Is.EqualTo("third"));
+            Assert.That(history.TryMove(-1, value, out value), Is.True);
+            Assert.That(value, Is.EqualTo("second"));
+            Assert.That(history.TryMove(-1, value, out value), Is.True);
+            Assert.That(value, Is.EqualTo("first"));
+            Assert.That(history.TryMove(-1, value, out value), Is.True);
+            Assert.That(value, Is.EqualTo("first"));
+            Assert.That(history.TryMove(1, value, out value), Is.True);
+            Assert.That(value, Is.EqualTo("second"));
+            Assert.That(history.TryMove(1, value, out value), Is.True);
+            Assert.That(value, Is.EqualTo("third"));
+            Assert.That(history.TryMove(1, value, out value), Is.True);
+            Assert.That(value, Is.Empty);
+            Assert.That(history.TryMove(1, value, out value), Is.False);
+        }
+
+        [Test]
+        public void Prompt_history_does_not_replace_nonempty_draft_and_editing_exits_navigation()
+        {
+            var history = new PromptHistoryNavigator();
+            history.Update(new[] { "first", "second" });
+
+            Assert.That(history.TryMove(-1, "draft", out var value), Is.False);
+            Assert.That(value, Is.EqualTo("draft"));
+            Assert.That(history.TryMove(-1, string.Empty, out value), Is.True);
+            Assert.That(value, Is.EqualTo("second"));
+
+            history.NotifyEdited("second edited");
+
+            Assert.That(history.TryMove(1, "second edited", out value), Is.False);
+            Assert.That(value, Is.EqualTo("second edited"));
+        }
+
+        [Test]
+        public void Composer_submit_sends_on_enter_and_inserts_newline_on_shift_enter()
+        {
+            var completion = new TaskCompletionSource<AiResponse>();
+            using (var fixture = new PanelFixture())
+            {
+                fixture.Panel.Bind(
+                    fixture.Layout,
+                    null,
+                    gameObject => gameObject.AddComponent<TestTmpText>());
+                fixture.Panel.Configure(CreateWorkflow((_, __) => completion.Task));
+                fixture.Panel.Workflow.OpenPanel();
+
+                fixture.Panel.SetPromptText("line one");
+                fixture.Composer.SetTextWithoutNotify("line one");
+                fixture.Composer.stringPosition = fixture.Composer.text.Length;
+                fixture.Panel.HandleComposerSubmit(true);
+                Assert.That(fixture.Composer.text, Is.EqualTo("line one\n"));
+                Assert.That(fixture.Panel.Workflow.State, Is.EqualTo(VizzyGptPanelState.Idle));
+
+                fixture.Panel.SetPromptText("send this");
+                fixture.Composer.SetTextWithoutNotify("send this");
+                fixture.Panel.HandleComposerSubmit(false);
+                Assert.That(fixture.Panel.Workflow.State, Is.EqualTo(VizzyGptPanelState.Sending));
+                Assert.That(fixture.Composer.text, Is.Empty);
+
+                completion.SetResult(new AiResponse("Done.", null, false, Array.Empty<string>()));
+            }
+        }
+
         private static VizzyGptPanelRenderState CreateState(
             VizzyGptPanelState state,
             IReadOnlyList<ConversationEntryRenderModel> entries,

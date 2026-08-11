@@ -201,7 +201,7 @@ namespace VizzyGPT.Tests.EditMode
             var preview = LoadResource("PreviewDialog.xml");
             AssertAnchoredRect(preview, "preview-title", "0 1", "0 1", "0 1", "20 -52", "400 -20");
             var settings = LoadResource("SettingsDialog.xml");
-            AssertAnchoredRect(settings, "settings-title", "0 1", "0 1", "0 1", "20 -52", "400 -20");
+            AssertAnchoredRect(settings, "settings-title", "0 1", "0 1", "0 1", "20 -46", "420 -16");
         }
 
         [Test]
@@ -209,13 +209,28 @@ namespace VizzyGPT.Tests.EditMode
         {
             var settings = LoadResource("SettingsDialog.xml");
             var form = (XmlElement)settings.SelectSingleNode("//*[@id='settings-form']")!;
-            var clear = (XmlElement)settings.SelectSingleNode("//*[@id='clear-history-button']")!;
+            var footer = (XmlElement)settings.SelectSingleNode("//*[@id='settings-footer']")!;
             var formBottom = ParsePair(form.GetAttribute("offsetMin")).Y;
-            var clearCenterY = ParsePair(clear.GetAttribute("offsetXY")).Y;
-            Assert.That(clear.GetAttribute("height"), Is.EqualTo("30"));
-            var clearHeight = ParseInt(clear.GetAttribute("height"));
+            var footerCenterY = ParsePair(footer.GetAttribute("offsetXY")).Y;
+            var footerHeight = ParseInt(footer.GetAttribute("height"));
 
-            Assert.That(formBottom, Is.GreaterThanOrEqualTo(clearCenterY + clearHeight / 2 + 4));
+            Assert.That(formBottom, Is.GreaterThanOrEqualTo(footerCenterY + footerHeight / 2 + 4));
+        }
+
+        [Test]
+        public void Settings_uses_compact_two_column_rows_and_separate_footer_actions()
+        {
+            var settings = LoadResource("SettingsDialog.xml");
+            var content = (XmlElement)settings.SelectSingleNode("//*[@id='settings-dialog-content']")!;
+            var title = (XmlElement)settings.SelectSingleNode("//*[@id='settings-title']")!;
+            var connectionRow = (XmlElement)settings.SelectSingleNode("//*[@id='connection-row']")!;
+            var footer = (XmlElement)settings.SelectSingleNode("//*[@id='settings-footer']")!;
+
+            Assert.That(ParseInt(content.GetAttribute("width")), Is.GreaterThanOrEqualTo(680));
+            Assert.That(ParseInt(content.GetAttribute("height")), Is.LessThanOrEqualTo(500));
+            Assert.That(ParseInt(title.GetAttribute("fontSize")), Is.LessThanOrEqualTo(24));
+            Assert.That(connectionRow.Name, Is.EqualTo("HorizontalLayout"));
+            Assert.That(footer.Name, Is.EqualTo("HorizontalLayout"));
         }
 
         private static IEnumerable<TestCaseData> Resources()
@@ -406,6 +421,10 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(promptRect.yMax, Is.LessThan(transcriptRect.yMin));
             Assert.That(transcriptRect.yMin, Is.GreaterThan(0), "Transcript bottom offset must reserve lower controls.");
             Assert.That(transcriptRect.yMax, Is.LessThan(panelHeight), "Transcript top offset must reserve upper controls.");
+            Assert.That(
+                transcriptRect.yMin - promptRect.yMax,
+                Is.GreaterThanOrEqualTo(48f),
+                "Transcript must reserve room for the final reasoning/error/Preview action row above the composer.");
         }
 
         private static XmlDocument LoadStockStyles()

@@ -211,21 +211,51 @@ namespace VizzyGPT.Tests.EditMode
         public void Editor_ask_includes_the_active_program_without_enabling_mutation()
         {
             AiRequest? sentRequest = null;
+            var catalogCalls = 0;
             var adapter = new FakeAdapter(InitialXml);
-            using var workflow = CreateWorkflow(adapter, (request, _) =>
-            {
-                sentRequest = request;
-                return Task.FromResult(new AiResponse("Explanation.", null, false, Array.Empty<string>()));
-            });
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    sentRequest = request;
+                    return Task.FromResult(new AiResponse("Explanation.", null, false, Array.Empty<string>()));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
 
             workflow.OpenPanel();
             workflow.SendPromptAsync("Explain this program.").GetAwaiter().GetResult();
 
             Assert.That(sentRequest, Is.Not.Null);
-            Assert.That(sentRequest!.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
+            Assert.That(sentRequest!.Purpose, Is.EqualTo(AiRequestPurpose.Ask));
+            Assert.That(sentRequest.Context, Does.Contain("<Log id=\"1\" text=\"before\""));
             Assert.That(sentRequest.Context, Does.Contain("Ask mode does not permit program mutation."));
+            Assert.That(sentRequest.Context, Does.Not.Contain("CURRENT VIZZY NODE TEMPLATES"));
+            Assert.That(catalogCalls, Is.Zero);
             Assert.That(workflow.CanApply, Is.False);
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Modify_marks_the_model_request_as_a_patch_request()
+        {
+            AiRequest? sentRequest = null;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                sentRequest = request;
+                return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
+
+            Assert.That(sentRequest, Is.Not.Null);
+            Assert.That(sentRequest!.Purpose, Is.EqualTo(AiRequestPurpose.Modify));
         }
 
         [Test]
@@ -300,7 +330,7 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
-        public void Modify_catalog_infrastructure_failure_does_not_trigger_repair()
+        public void Modify_reuses_the_captured_catalog_during_validation()
         {
             var sendCount = 0;
             var catalogCalls = 0;
@@ -327,9 +357,8 @@ namespace VizzyGPT.Tests.EditMode
             workflow.SendPromptAsync("Add a counter.").GetAwaiter().GetResult();
 
             Assert.That(sendCount, Is.EqualTo(1));
-            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
-            Assert.That(workflow.CurrentRenderState.Entries.Last().Error!.Code,
-                Is.EqualTo(nameof(InvalidOperationException)));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
         }
 
         [Test]
@@ -503,10 +532,105 @@ namespace VizzyGPT.Tests.EditMode
         }
 
         [Test]
+        public void Modify_includes_the_captured_catalog_model_skill_reference()
+        {
+            var requests = new List<AiRequest>();
+            var catalogCalls = 0;
+            using var workflow = CreateWorkflow(
+                new FakeAdapter(InitialXml),
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(1));
+            Assert.That(requests[0].Context, Does.Contain("VIZZY MODEL SKILL"));
+            Assert.That(requests[0].Context, Does.Contain("style=\"set-input\""));
+            Assert.That(requests[0].Context, Does.Contain("input=\"throttle\""));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Modify_repair_includes_matching_templates_from_the_captured_catalog()
+        {
+            var requests = new List<AiRequest>();
+            var catalogCalls = 0;
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(requests.Count == 1
+                        ? CreateUnknownStyleResponse(InitialXml)
+                        : CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: () =>
+                {
+                    catalogCalls++;
+                    return CreateThrottleCatalog();
+                });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].Context, Does.Contain("Error code: UnknownStyle"));
+            Assert.That(requests[1].Context, Does.Contain("SetInput"));
+            Assert.That(requests[1].Context, Does.Contain("style=\"set-input\""));
+            Assert.That(requests[1].Context, Does.Contain("input=\"throttle\""));
+            Assert.That(requests[1].Context, Does.Not.Contain("<Style"));
+            Assert.That(requests[1].Context, Does.Not.Contain("<SetThrottle"));
+            Assert.That(requests[1].Context, Does.Contain("Style 'set-throttle'"));
+            Assert.That(
+                requests[1].Context.Split(new[] { "set-throttle" }, StringSplitOptions.None),
+                Has.Length.EqualTo(2));
+            Assert.That(catalogCalls, Is.EqualTo(1));
+            Assert.That(adapter.SetCalls, Is.Zero);
+        }
+
+        [Test]
+        public void Modify_repairs_one_known_but_mismatched_element_style_pair_before_preview()
+        {
+            var requests = new List<AiRequest>();
+            var adapter = new FakeAdapter(InitialXml);
+            using var workflow = CreateWorkflow(
+                adapter,
+                (request, _) =>
+                {
+                    requests.Add(request);
+                    return Task.FromResult(requests.Count == 1
+                        ? CreateMismatchedStyleResponse(InitialXml)
+                        : CreateValidModifyResponseValue(InitialXml));
+                },
+                createCatalog: CreateThrottleCatalog);
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Set throttle.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(2));
+            Assert.That(requests[1].Context, Does.Contain("Error code: MismatchedElementStyle"));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
+            Assert.That(adapter.SetCalls, Is.Zero);
+        }
+
+        [Test]
         public void Modify_rejects_an_invalid_source_program_before_transport()
         {
             var sendCalls = 0;
-            var invalidSource = "<Program><Variables /><Expressions /></Program>";
+            var invalidSource = "<Program><Variables /></Program>";
             var adapter = new FakeAdapter(invalidSource);
             using var workflow = CreateWorkflow(adapter, (_, __) =>
             {
@@ -522,6 +646,30 @@ namespace VizzyGPT.Tests.EditMode
             Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.Error));
             Assert.That(workflow.StatusText, Does.Contain("Current Vizzy program is not safe to modify"));
             Assert.That(adapter.SetCalls, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void Modify_accepts_an_empty_program_and_previews_a_new_instruction_stack()
+        {
+            const string emptyProgram = "<Program><Variables /><Expressions /></Program>";
+            var requests = new List<AiRequest>();
+            var adapter = new FakeAdapter(emptyProgram);
+            using var workflow = CreateWorkflow(adapter, (request, _) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(CreateTopLevelInstructionResponse(emptyProgram));
+            });
+
+            workflow.OpenPanel();
+            workflow.SetMode(VizzyGptPanelMode.Modify);
+            workflow.SendPromptAsync("Create a program.").GetAwaiter().GetResult();
+
+            Assert.That(requests, Has.Count.EqualTo(1));
+            Assert.That(requests[0].Context, Does.Contain("zero or more direct Instructions stacks"));
+            Assert.That(requests[0].Context, Does.Contain("insertChild targeting /Program[0]"));
+            Assert.That(workflow.State, Is.EqualTo(VizzyGptPanelState.PreviewReady));
+            Assert.That(workflow.ShowPreview(), Is.Not.Null);
+            Assert.That(adapter.SetCalls, Is.Zero);
         }
 
         [Test]
@@ -714,6 +862,34 @@ namespace VizzyGPT.Tests.EditMode
             return new AiResponse("Counter preview.", patch, true, Array.Empty<string>());
         }
 
+        private static AiResponse CreateTopLevelInstructionResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Create instruction stack",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]"),
+                        node: new NodeSpec(
+                            "Instructions",
+                            new Dictionary<string, string>(StringComparer.Ordinal),
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Log",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["id"] = "1"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Instruction stack preview.", patch, true, Array.Empty<string>());
+        }
+
         private static AiResponse CreateProtectedRootResponse(string baseXml, string marker)
         {
             var document = VizzyProgramDocument.Parse(baseXml);
@@ -729,10 +905,82 @@ namespace VizzyGPT.Tests.EditMode
             return new AiResponse(marker, patch, true, Array.Empty<string>());
         }
 
+        private static AiResponse CreateUnknownStyleResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Insert invalid throttle control",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]/Instructions[0]"),
+                        node: new NodeSpec(
+                            "SetThrottle",
+                            new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["style"] = "set-throttle"
+                            },
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Constant",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["number"] = "0"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Invalid throttle preview.", patch, true, Array.Empty<string>());
+        }
+
+        private static AiResponse CreateMismatchedStyleResponse(string baseXml)
+        {
+            var document = VizzyProgramDocument.Parse(baseXml);
+            var patch = new PatchDocument(
+                VizzyProgramHash.Compute(document),
+                "Insert mismatched throttle control",
+                new[]
+                {
+                    new PatchOperation(
+                        PatchOperationType.InsertChild,
+                        new NodeSelector(null, "/Program[0]/Instructions[0]"),
+                        node: new NodeSpec(
+                            "SetInput",
+                            new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["style"] = "flight-start",
+                                ["input"] = "throttle"
+                            },
+                            new[]
+                            {
+                                new NodeSpec(
+                                    "Constant",
+                                    new Dictionary<string, string>(StringComparer.Ordinal)
+                                    {
+                                        ["number"] = "0"
+                                    },
+                                    Array.Empty<NodeSpec>())
+                            }))
+                });
+            return new AiResponse("Mismatched throttle preview.", patch, true, Array.Empty<string>());
+        }
+
         private static VizzyNodeCatalog CreateCatalog()
         {
             return VizzyNodeCatalog.FromToolboxXml(
                 "<VizzyToolbox><Instructions><Log /></Instructions><Expressions /></VizzyToolbox>");
+        }
+
+        private static VizzyNodeCatalog CreateThrottleCatalog()
+        {
+            return VizzyNodeCatalog.FromToolboxXml(
+                "<VizzyToolbox><Styles><Style id='flight-start' color='Event' /><Style id='set-input' color='CraftInstruction' /></Styles>" +
+                "<Categories><Category name='Events'><Event style='flight-start' /></Category><Category name='Craft Instructions'>" +
+                "<SetInput style='set-input' input='throttle'><Constant number='0' /></SetInput>" +
+                "</Category></Categories></VizzyToolbox>");
         }
 
         private sealed class FakeAdapter : IVizzyRuntimeAdapter
