@@ -12,6 +12,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - [x] Build version 0.1.0 from the final source and install it at `UserData/../Mods/VizzyGPT.sr2-mod`.
 - [x] Restart Juno with VizzyGPT enabled and confirm one successful load line in `ModLoadLog.txt`.
 - [x] Confirm `Player.log` contains no VizzyGPT exception or error in the final package load smoke test.
+- [x] Open a Vizzy program with the final package and open VizzyGPT. Expected: the panel mounts and the active editor contract resolves without an ambiguous-contract exception.
 - [x] Record the final package SHA-256 in this file.
 
 ## Settings And Chat
@@ -94,6 +95,7 @@ Automated tests support this checklist but do not replace game-lifecycle checks.
 - Final package size: `16,813,131` bytes.
 - Final package hash: `CAAD7BC98DC9EB2326A36E17D466BC1CA33449E9A1661FCD6E0956D9D5098418`.
 - Final load smoke: the rebuilt package loaded on Juno 1.4.104.0c and the current `Player.log` contained no VizzyGPT error or exception. The existing `CylinderTank`/`PartConnection` craft warnings are unrelated to VizzyGPT.
+- Final editor mount acceptance: after entering the Vizzy editor, `Player.log` recorded `VizzyGPT resolved Vizzy runtime contract: Assets.Scripts.Vizzy.UI.VizzyUIScript.FlightProgram` followed by successful bundled CJK glyph validation. No `AmbiguousContract`, `ArgumentException`, or `ConfigureMountedPanel` failure recurred.
 - Editor-probe regression coverage: an inactive loader-only editor is excluded from candidate selection, while multiple active candidates return a non-modifiable ambiguity result instead of throwing during panel mount.
 - Live resilient-chat acceptance on Juno 1.4.104.0c: Chinese input/reply, waiting stage and elapsed time, reasoning disclosure, one-shot repair, non-applicable double failure, contextual preview/cancel, active-conversation clear, and panel-reopen history restoration all passed.
 - Live selector-schema follow-up on Juno 1.4.104.0c: the final package loaded, Chinese input rendered, Enter sent, and Up restored the previous prompt. The configured `https://synapse-ai.uk/` endpoint did not return an automatic-landing patch in either attempt, so that larger patch scenario remains unverified rather than passed.
